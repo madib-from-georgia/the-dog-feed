@@ -420,6 +420,287 @@ export class DatabaseService {
         });
     }
 
+    // Удаление пользователя по Telegram ID
+    async deleteUserByTelegramId(telegramId: number): Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            const db = this.db;
+            db.serialize(() => {
+                // Начинаем транзакцию
+                db.run('BEGIN TRANSACTION', (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    // Сначала получаем ID пользователя
+                    db.get(
+                        'SELECT id FROM users WHERE telegram_id = ?',
+                        [telegramId],
+                        (err, row: any) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                reject(err);
+                                return;
+                            }
+
+                            if (!row) {
+                                db.run('ROLLBACK');
+                                resolve(false); // Пользователь не найден
+                                return;
+                            }
+
+                            const userId = row.id;
+
+                            // Удаляем связанные данные в правильном порядке
+                            db.run(
+                                'DELETE FROM scheduled_feedings WHERE created_by = ?',
+                                [userId],
+                                (err) => {
+                                    if (err) {
+                                        db.run('ROLLBACK');
+                                        reject(err);
+                                        return;
+                                    }
+
+                                    db.run(
+                                        'DELETE FROM feedings WHERE user_id = ?',
+                                        [userId],
+                                        (err) => {
+                                            if (err) {
+                                                db.run('ROLLBACK');
+                                                reject(err);
+                                                return;
+                                            }
+
+                                            // Наконец удаляем самого пользователя
+                                            db.run(
+                                                'DELETE FROM users WHERE id = ?',
+                                                [userId],
+                                                function (err) {
+                                                    if (err) {
+                                                        db.run('ROLLBACK');
+                                                        reject(err);
+                                                        return;
+                                                    }
+
+                                                    const changes = this.changes;
+
+                                                    // Фиксируем транзакцию
+                                                    db.run('COMMIT', (err: any) => {
+                                                        if (err) {
+                                                            reject(err);
+                                                        } else {
+                                                            resolve(changes > 0);
+                                                        }
+                                                    });
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                });
+            });
+        });
+    }
+
+    // Удаление пользователя по внутреннему ID
+    async deleteUserById(userId: number): Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            const db = this.db;
+            db.serialize(() => {
+                // Начинаем транзакцию
+                db.run('BEGIN TRANSACTION', (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    // Удаляем связанные данные в правильном порядке
+                    db.run(
+                        'DELETE FROM scheduled_feedings WHERE created_by = ?',
+                        [userId],
+                        (err) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                reject(err);
+                                return;
+                            }
+
+                            db.run(
+                                'DELETE FROM feedings WHERE user_id = ?',
+                                [userId],
+                                (err) => {
+                                    if (err) {
+                                        db.run('ROLLBACK');
+                                        reject(err);
+                                        return;
+                                    }
+
+                                    // Наконец удаляем самого пользователя
+                                    db.run(
+                                        'DELETE FROM users WHERE id = ?',
+                                        [userId],
+                                        function (err) {
+                                            if (err) {
+                                                db.run('ROLLBACK');
+                                                reject(err);
+                                                return;
+                                            }
+
+                                            const changes = this.changes;
+
+                                            // Фиксируем транзакцию
+                                            db.run('COMMIT', (err: any) => {
+                                                if (err) {
+                                                    reject(err);
+                                                } else {
+                                                    resolve(changes > 0);
+                                                }
+                                            });
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                });
+            });
+        });
+    }
+
+    // Удаление пользователя по имени пользователя
+    async deleteUserByUsername(username: string): Promise<{ deleted: boolean; user?: DatabaseUser }> {
+        return new Promise((resolve, reject) => {
+            const db = this.db;
+            db.serialize(() => {
+                // Начинаем транзакцию
+                db.run('BEGIN TRANSACTION', (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    // Сначала получаем полную информацию о пользователе
+                    db.get(
+                        'SELECT id, telegram_id, username, notifications_enabled, feeding_interval, timezone, created_at FROM users WHERE username = ?',
+                        [username],
+                        (err, row: any) => {
+                            if (err) {
+                                db.run('ROLLBACK');
+                                reject(err);
+                                return;
+                            }
+
+                            if (!row) {
+                                db.run('ROLLBACK');
+                                resolve({ deleted: false }); // Пользователь не найден
+                                return;
+                            }
+
+                            const user: DatabaseUser = {
+                                id: row.id,
+                                telegramId: row.telegram_id,
+                                username: row.username,
+                                notificationsEnabled: Boolean(row.notifications_enabled),
+                                feedingInterval: row.feeding_interval,
+                                timezone: row.timezone,
+                                createdAt: new Date(row.created_at),
+                            };
+
+                            const userId = row.id;
+
+                            // Удаляем связанные данные в правильном порядке
+                            db.run(
+                                'DELETE FROM scheduled_feedings WHERE created_by = ?',
+                                [userId],
+                                (err) => {
+                                    if (err) {
+                                        db.run('ROLLBACK');
+                                        reject(err);
+                                        return;
+                                    }
+
+                                    db.run(
+                                        'DELETE FROM feedings WHERE user_id = ?',
+                                        [userId],
+                                        (err) => {
+                                            if (err) {
+                                                db.run('ROLLBACK');
+                                                reject(err);
+                                                return;
+                                            }
+
+                                            // Наконец удаляем самого пользователя
+                                            db.run(
+                                                'DELETE FROM users WHERE id = ?',
+                                                [userId],
+                                                function (err) {
+                                                    if (err) {
+                                                        db.run('ROLLBACK');
+                                                        reject(err);
+                                                        return;
+                                                    }
+
+                                                    const changes = this.changes;
+
+                                                    // Фиксируем транзакцию
+                                                    db.run('COMMIT', (err: any) => {
+                                                        if (err) {
+                                                            reject(err);
+                                                        } else {
+                                                            resolve({
+                                                                deleted: changes > 0,
+                                                                user: changes > 0 ? user : undefined
+                                                            });
+                                                        }
+                                                    });
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                });
+            });
+        });
+    }
+
+    // Поиск пользователей по частичному совпадению имени
+    async findUsersByUsername(partialUsername: string): Promise<DatabaseUser[]> {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                `
+        SELECT id, telegram_id, username, notifications_enabled, feeding_interval, timezone, created_at
+        FROM users
+        WHERE username LIKE ?
+        ORDER BY username
+      `,
+                [`%${partialUsername}%`],
+                (err, rows: any[]) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const users = rows.map(row => ({
+                            id: row.id,
+                            telegramId: row.telegram_id,
+                            username: row.username,
+                            notificationsEnabled: Boolean(row.notifications_enabled),
+                            feedingInterval: row.feeding_interval,
+                            timezone: row.timezone,
+                            createdAt: new Date(row.created_at),
+                        }));
+                        resolve(users);
+                    }
+                }
+            );
+        });
+    }
+
     // Методы для работы с кормлениями
     async createFeeding(
         userId: number,

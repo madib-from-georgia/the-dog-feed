@@ -287,6 +287,187 @@ bot.command('access', async ctx => {
     }
 });
 
+// Команда для просмотра списка пользователей (только для администраторов)
+bot.command('users', async ctx => {
+    try {
+        const userId = ctx.from?.id;
+        if (!userId || !accessControlService.isUserAllowed(userId)) {
+            await ctx.reply('🚫 У вас нет прав для выполнения этой команды');
+            return;
+        }
+
+        const users = await database.getAllUsers();
+        
+        if (users.length === 0) {
+            await ctx.reply('📋 В базе данных нет пользователей');
+            return;
+        }
+
+        let message = `👥 Пользователи в базе данных (${users.length}):\n\n`;
+        
+        users.forEach((user, index) => {
+            message += `${index + 1}. ${user.username || 'Без имени'}\n`;
+            message += `   • ID: ${user.telegramId}\n`;
+            message += `   • Уведомления: ${user.notificationsEnabled ? '🔔' : '🔕'}\n`;
+            message += `   • Интервал: ${user.feedingInterval} мин\n`;
+            if (user.timezone) {
+                message += `   • Часовой пояс: ${user.timezone}\n`;
+            }
+            message += `   • Создан: ${user.createdAt.toLocaleDateString()}\n\n`;
+        });
+
+        // Telegram имеет ограничение на длину сообщения (4096 символов)
+        if (message.length > 4000) {
+            const chunks = [];
+            let currentChunk = `👥 Пользователи в базе данных (${users.length}):\n\n`;
+            
+            users.forEach((user, index) => {
+                const userInfo = `${index + 1}. ${user.username || 'Без имени'}\n` +
+                    `   • ID: ${user.telegramId}\n` +
+                    `   • Уведомления: ${user.notificationsEnabled ? '🔔' : '🔕'}\n` +
+                    `   • Интервал: ${user.feedingInterval} мин\n` +
+                    (user.timezone ? `   • Часовой пояс: ${user.timezone}\n` : '') +
+                    `   • Создан: ${user.createdAt.toLocaleDateString()}\n\n`;
+                
+                if (currentChunk.length + userInfo.length > 4000) {
+                    chunks.push(currentChunk);
+                    currentChunk = userInfo;
+                } else {
+                    currentChunk += userInfo;
+                }
+            });
+            
+            if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
+            }
+            
+            for (const chunk of chunks) {
+                await ctx.reply(chunk);
+            }
+        } else {
+            await ctx.reply(message);
+        }
+    } catch (error) {
+        console.error('Ошибка в команде /users:', error);
+        await ctx.reply('❌ Ошибка при получении списка пользователей');
+    }
+});
+
+// Команда для поиска пользователей по имени (только для администраторов)
+bot.command('finduser', async ctx => {
+    try {
+        const userId = ctx.from?.id;
+        if (!userId || !accessControlService.isUserAllowed(userId)) {
+            await ctx.reply('🚫 У вас нет прав для выполнения этой команды');
+            return;
+        }
+
+        const args = ctx.message.text.split(' ').slice(1);
+        const searchTerm = args.join(' ').trim();
+
+        if (!searchTerm) {
+            await ctx.reply('❌ Укажите имя пользователя для поиска\n\nИспользование: /finduser <имя>');
+            return;
+        }
+
+        const users = await database.findUsersByUsername(searchTerm);
+        
+        if (users.length === 0) {
+            await ctx.reply(`🔍 Пользователи с именем "${searchTerm}" не найдены`);
+            return;
+        }
+
+        let message = `🔍 Найдено пользователей: ${users.length}\n\n`;
+        
+        users.forEach((user, index) => {
+            message += `${index + 1}. ${user.username || 'Без имени'}\n`;
+            message += `   • ID: ${user.telegramId}\n`;
+            message += `   • Уведомления: ${user.notificationsEnabled ? '🔔' : '🔕'}\n`;
+            message += `   • Создан: ${user.createdAt.toLocaleDateString()}\n\n`;
+        });
+
+        await ctx.reply(message);
+    } catch (error) {
+        console.error('Ошибка в команде /finduser:', error);
+        await ctx.reply('❌ Ошибка при поиске пользователей');
+    }
+});
+
+// Команда для удаления пользователя из базы данных (только для администраторов)
+bot.command('deleteuser', async ctx => {
+    try {
+        const userId = ctx.from?.id;
+        if (!userId || !accessControlService.isUserAllowed(userId)) {
+            await ctx.reply('🚫 У вас нет прав для выполнения этой команды');
+            return;
+        }
+
+        const args = ctx.message.text.split(' ').slice(1);
+        const input = args.join(' ').trim();
+
+        if (!input) {
+            await ctx.reply(
+                '❌ Укажите имя пользователя или Telegram ID\n\n' +
+                'Использование:\n' +
+                '• /deleteuser <имя_пользователя>\n' +
+                '• /deleteuser <telegram_id>\n\n' +
+                'Для поиска пользователей используйте /finduser <имя>'
+            );
+            return;
+        }
+
+        let targetUser = null;
+        let deletionResult = null;
+
+        // Проверяем, является ли ввод числом (Telegram ID)
+        const telegramId = parseInt(input, 10);
+        if (!isNaN(telegramId)) {
+            if (telegramId === userId) {
+                await ctx.reply('❌ Нельзя удалить самого себя из базы данных');
+                return;
+            }
+
+            targetUser = await database.getUserByTelegramId(telegramId);
+            if (!targetUser) {
+                await ctx.reply(`❌ Пользователь с ID ${telegramId} не найден в базе данных`);
+                return;
+            }
+
+            const deleted = await database.deleteUserByTelegramId(telegramId);
+            deletionResult = { deleted, user: deleted ? targetUser : undefined };
+        } else {
+            // Ищем по имени пользователя
+            const currentUser = await database.getUserByTelegramId(userId);
+            if (currentUser && currentUser.username === input) {
+                await ctx.reply('❌ Нельзя удалить самого себя из базы данных');
+                return;
+            }
+
+            deletionResult = await database.deleteUserByUsername(input);
+        }
+        
+        if (deletionResult.deleted && deletionResult.user) {
+            // Также удаляем из списка разрешенных пользователей
+            accessControlService.removeUser(deletionResult.user.telegramId);
+            
+            await ctx.reply(
+                `✅ Пользователь удален из базы данных:\n` +
+                `• Имя: ${deletionResult.user.username || 'Не указано'}\n` +
+                `• Telegram ID: ${deletionResult.user.telegramId}\n` +
+                `• Удалены все связанные данные: кормления, расписания\n` +
+                `• Удален из списка разрешенных пользователей`
+            );
+            
+            console.log(`Пользователь ${deletionResult.user.telegramId} (${deletionResult.user.username}) удален из базы данных администратором ${userId}`);
+        } else {
+            await ctx.reply(`❌ Пользователь "${input}" не найден в базе данных`);
+        }
+    } catch (error) {
+        console.error('Ошибка в команде /deleteuser:', error);
+        await ctx.reply('❌ Ошибка при удалении пользователя');
+    }
+});
+
 // Middleware для сессий и сцен
 bot.use(session());
 bot.use(stage.middleware());
