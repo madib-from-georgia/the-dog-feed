@@ -59,6 +59,7 @@ import {
     getTimeOffsetInMinutes,
     getTimezoneByOffset,
 } from './utils/timezone-utils';
+import { AccessControlService } from './services/access-control';
 
 // Загрузка переменных окружения
 dotenv.config();
@@ -116,6 +117,7 @@ const databaseBotState: DatabaseBotState = {
 // Инициализация сервисов
 const timerService = new TimerService(bot, database);
 const schedulerService = new SchedulerService(database, timerService);
+const accessControlService = new AccessControlService();
 
 // Установка глобальных сервисов для сцен
 setGlobalServices(timerService, database);
@@ -216,9 +218,99 @@ bot.command('scheduler', async ctx => {
     }
 });
 
+// Команда для управления доступом (только для разрешенных пользователей)
+bot.command('access', async ctx => {
+    try {
+        const userId = ctx.from?.id;
+        if (!userId || !accessControlService.isUserAllowed(userId)) {
+            await ctx.reply('🚫 У вас нет прав для выполнения этой команды');
+            return;
+        }
+
+        const args = ctx.message.text.split(' ').slice(1);
+        const command = args[0];
+        const targetUserId = parseInt(args[1], 10);
+
+        if (!command) {
+            const allowedUsers = accessControlService.getAllowedUsers();
+            let message = `🔐 Управление доступом:\n\n`;
+            message += `👥 Разрешенных пользователей: ${accessControlService.getAllowedUsersCount()}\n\n`;
+            
+            if (allowedUsers.length > 0) {
+                message += `📋 Список разрешенных ID:\n`;
+                message += allowedUsers.map(id => `  • ${id}`).join('\n');
+            }
+            
+            message += `\n\n📖 Команды:\n`;
+            message += `• /access add <user_id> - добавить пользователя\n`;
+            message += `• /access remove <user_id> - удалить пользователя\n`;
+            message += `• /access reload - перезагрузить список из файла`;
+            
+            await ctx.reply(message);
+            return;
+        }
+
+        switch (command) {
+            case 'add':
+                if (isNaN(targetUserId)) {
+                    await ctx.reply('❌ Укажите корректный ID пользователя');
+                    return;
+                }
+                accessControlService.addUser(targetUserId);
+                await ctx.reply(`✅ Пользователь ${targetUserId} добавлен в список разрешенных`);
+                break;
+
+            case 'remove':
+                if (isNaN(targetUserId)) {
+                    await ctx.reply('❌ Укажите корректный ID пользователя');
+                    return;
+                }
+                if (targetUserId === userId) {
+                    await ctx.reply('❌ Нельзя удалить самого себя из списка разрешенных');
+                    return;
+                }
+                accessControlService.removeUser(targetUserId);
+                await ctx.reply(`✅ Пользователь ${targetUserId} удален из списка разрешенных`);
+                break;
+
+            case 'reload':
+                accessControlService.reloadAllowedUsers();
+                await ctx.reply(`✅ Список разрешенных пользователей перезагружен из файла`);
+                break;
+
+            default:
+                await ctx.reply('❌ Неизвестная команда. Используйте: add, remove, reload');
+        }
+    } catch (error) {
+        console.error('Ошибка в команде /access:', error);
+        await ctx.reply('❌ Ошибка при выполнении команды');
+    }
+});
+
 // Middleware для сессий и сцен
 bot.use(session());
 bot.use(stage.middleware());
+
+// Middleware для проверки доступа пользователей
+bot.use(async (ctx, next) => {
+    // Проверяем доступ только для пользователей (не для каналов/групп)
+    if (ctx.from && ctx.from.id) {
+        const userId = ctx.from.id;
+        
+        if (!accessControlService.isUserAllowed(userId)) {
+            console.log(`Доступ запрещен для пользователя ${userId} (${ctx.from.username || ctx.from.first_name})`);
+            
+            await ctx.reply(
+                '🚫 Доступ запрещен\n\n' +
+                'Этот бот доступен только для авторизованных пользователей.\n' +
+                'Если вы считаете, что это ошибка, обратитесь к администратору.'
+            );
+            return; // Прерываем выполнение, не вызываем next()
+        }
+    }
+    
+    return next();
+});
 
 // Middleware для установки database в контексте
 bot.use((ctx, next) => {
