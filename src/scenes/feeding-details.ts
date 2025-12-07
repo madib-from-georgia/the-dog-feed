@@ -125,6 +125,13 @@ feedingDetailsScene.on('text', async ctx => {
             feedingTime
         );
 
+        // Если время кормления было изменено, перезапускаем таймер
+        if (feedingTime && ctx.timerService?.isTimerActive()) {
+            const intervalMinutes = ctx.timerService.getCurrentInterval();
+            ctx.timerService.startFeedingTimer(intervalMinutes, feedingTime);
+            console.log(`Таймер перезапущен с учетом нового времени: ${formatDateTime(feedingTime, user?.timezone)}`);
+        }
+
         // Формируем сообщение об обновлении
         let updateMessage = MessageFormatter.success(UI_TEXTS.feeding.detailsUpdated) + '\n\n';
         if (feedingTime) {

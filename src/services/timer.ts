@@ -66,13 +66,16 @@ export class TimerService {
     }
 
     // Запуск таймера после кормления
-    startFeedingTimer(customIntervalMinutes?: number): void {
+    startFeedingTimer(customIntervalMinutes?: number, baseTime?: Date): void {
         this.clearAllTimers();
 
         const intervalMinutes =
             customIntervalMinutes || this.timerState.currentIntervalMinutes;
         const intervalMs = intervalMinutes * 60 * 1000;
-        const nextTime = new Date(Date.now() + intervalMs);
+
+        // Используем baseTime если указано, иначе текущее время
+        const startTime = baseTime ? baseTime.getTime() : Date.now();
+        const nextTime = new Date(startTime + intervalMs);
 
         this.timerState.nextFeedingTime = nextTime;
         this.timerState.isActive = true;
