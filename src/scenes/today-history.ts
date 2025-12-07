@@ -34,7 +34,7 @@ todayHistoryScene.enter(async ctx => {
         const usersMap = new Map<number, DatabaseUser>();
         allUsers.forEach((user: DatabaseUser) => usersMap.set(user.id, user));
 
-        let message = '📅 *История кормлений за сегодня*\n\n';
+        let message = '📅 *История за сегодня*\n\n';
 
         // Получаем запланированные кормления
         if (ctx.schedulerService) {

@@ -41,8 +41,7 @@ async function getOrCreateUser(
 // Клавиатура других действий
 function getOtherActionsKeyboard() {
     return createNavigationKeyboard([
-        ['Когда следующее кормление?'],
-        ['📋 История кормлений', '⚙️ Настройки'],
+        ['Когда следующее?', '📋 История', '⚙️ Настройки'],
     ]);
 }
 
@@ -59,8 +58,8 @@ otherActionsScene.enter(ctx => {
     ctx.reply('Выберите действие:', getOtherActionsKeyboard());
 });
 
-// Обработка кнопки "Когда следующее кормление?"
-otherActionsScene.hears(/Когда следующее кормление\?/, async ctx => {
+// Обработка кнопки "Когда следующее?"
+otherActionsScene.hears(/Когда следующее\?/, async ctx => {
     try {
         if (!ctx.timerService || !ctx.database) {
             ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
@@ -122,7 +121,7 @@ otherActionsScene.hears(/❌ Отменить запланированные/, c
 });
 
 // Обработка кнопки "История кормлений"
-otherActionsScene.hears(/📋 История кормлений/, ctx => {
+otherActionsScene.hears(/📋 История/, ctx => {
     ctx.scene.enter(SCENES.HISTORY);
 });
 
