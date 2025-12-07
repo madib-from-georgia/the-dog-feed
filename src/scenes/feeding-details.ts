@@ -16,18 +16,40 @@ registerCommonNavigationHandlers(feedingDetailsScene);
 
 // Вход в сцену уточнения деталей
 feedingDetailsScene.enter(async ctx => {
-    // Получаем ID последнего кормления из сессии
-    const lastFeedingId = ctx.session?.lastFeedingId;
-
-    if (!lastFeedingId) {
-        ctx.reply(
-            MessageFormatter.error(UI_TEXTS.feeding.noRecentFeeding),
-            getHomeKeyboard()
-        );
+    if (!ctx.database) {
+        ctx.reply(UI_TEXTS.errors.databaseNotInitialized, getHomeKeyboard());
         return;
     }
 
-    ctx.reply(UI_TEXTS.feeding.detailsPrompt, getHomeKeyboard());
+    try {
+        // Получаем ID последнего кормления из сессии
+        let lastFeedingId = ctx.session?.lastFeedingId;
+
+        // Если ID не найден в сессии, получаем последнее кормление из БД
+        if (!lastFeedingId) {
+            const lastFeeding = await ctx.database.getLastFeeding();
+            if (!lastFeeding) {
+                ctx.reply(
+                    MessageFormatter.error(UI_TEXTS.feeding.noRecentFeeding),
+                    getHomeKeyboard()
+                );
+                return;
+            }
+            lastFeedingId = lastFeeding.id;
+            // Сохраняем ID в сессию для последующих операций
+            if (ctx.session) {
+                ctx.session.lastFeedingId = lastFeedingId;
+            }
+        }
+
+        ctx.reply(UI_TEXTS.feeding.detailsPrompt, getHomeKeyboard());
+    } catch (error) {
+        console.error('Ошибка при получении последнего кормления:', error);
+        ctx.reply(
+            MessageFormatter.error('Произошла ошибка. ' + UI_TEXTS.common.tryAgain),
+            getHomeKeyboard()
+        );
+    }
 });
 
 // Обработка ввода деталей
@@ -158,10 +180,8 @@ feedingDetailsScene.on('text', async ctx => {
             }
         }
 
-        // Очищаем ID кормления из сессии
-        if (ctx.session) {
-            delete ctx.session.lastFeedingId;
-        }
+        // НЕ очищаем ID кормления из сессии, чтобы можно было редактировать снова
+        // ID будет обновлен при следующем кормлении
 
         // Возврат на главный экран
         setTimeout(() => {
