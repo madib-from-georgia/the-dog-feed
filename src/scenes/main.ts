@@ -205,6 +205,45 @@ mainScene.command('status', async ctx => {
         const nextFeeding = ctx.timerService.getNextFeedingInfo();
         const lastFeeding = await ctx.database.getLastFeeding();
         const stats = await ctx.database.getStats();
+
+        // Получаем текущего пользователя
+        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
+
+        let message = `${UI_TEXTS.status.header}`;
+
+        if (lastFeeding) {
+            const lastUser = await ctx.database.getUserById(lastFeeding.userId);
+            const username = createUserLink(lastUser);
+            message += `${UI_TEXTS.status.lastFeeding}\n`;
+            message += `   Время: ${formatDateTime(lastFeeding.timestamp, lastUser?.timezone)}\n`;
+            message += `   Кто: ${username}\n\n`;
+        } else {
+            message += UI_TEXTS.status.noFeedings;
+        }
+
+        // Форматирование интервала используя утилиту
+        const intervalText = formatInterval(nextFeeding.intervalMinutes);
+        message += `${UI_TEXTS.status.interval}: ${intervalText}\n\n`;
+
+        if (nextFeeding.isActive && nextFeeding.time) {
+            message += `${UI_TEXTS.status.nextFeeding} в ${formatDateTime(nextFeeding.time, currentUser?.timezone)}\n\n`;
+        } else {
+            message += `${UI_TEXTS.status.paused}\n\n`;
+        }
+
+        // Добавляем статистику
+        message += `${UI_TEXTS.status.statistics}\n`;
+        message += `   👥 Пользователей: ${stats.totalUsers}\n`;
+        message += `   🍽️ Кормлений сегодня: ${stats.todayFeedings}\n`;
+        message += `   📈 Всего кормлений: ${stats.totalFeedings}`;
+
+        ctx.reply(message);
+    } catch (error) {
+        console.error('Ошибка в команде /status:', error);
+        ctx.reply(MessageFormatter.error('Ошибка при получении статуса. ' + UI_TEXTS.common.tryAgain));
+    }
+});
+
 // Обработка кнопки "⏹️ Завершить кормления на сегодня"
 mainScene.hears(/⏹️ Завершить кормления на сегодня/, async ctx => {
     try {
@@ -245,45 +284,6 @@ mainScene.hears(/⏹️ Завершить кормления на сегодн�
     } catch (error) {
         console.error('Ошибка при остановке кормлений:', error);
         ctx.reply(MessageFormatter.error('Произошла ошибка при остановке кормлений. ' + UI_TEXTS.common.tryAgain));
-    }
-});
-
-
-        // Получаем текущего пользователя
-        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
-
-        let message = `${UI_TEXTS.status.header}`;
-
-        if (lastFeeding) {
-            const lastUser = await ctx.database.getUserById(lastFeeding.userId);
-            const username = createUserLink(lastUser);
-            message += `${UI_TEXTS.status.lastFeeding}\n`;
-            message += `   Время: ${formatDateTime(lastFeeding.timestamp, lastUser?.timezone)}\n`;
-            message += `   Кто: ${username}\n\n`;
-        } else {
-            message += UI_TEXTS.status.noFeedings;
-        }
-
-        // Форматирование интервала используя утилиту
-        const intervalText = formatInterval(nextFeeding.intervalMinutes);
-        message += `${UI_TEXTS.status.interval}: ${intervalText}\n\n`;
-
-        if (nextFeeding.isActive && nextFeeding.time) {
-            message += `${UI_TEXTS.status.nextFeeding} в ${formatDateTime(nextFeeding.time, currentUser?.timezone)}\n\n`;
-        } else {
-            message += `${UI_TEXTS.status.paused}\n\n`;
-        }
-
-        // Добавляем статистику
-        message += `${UI_TEXTS.status.statistics}\n`;
-        message += `   👥 Пользователей: ${stats.totalUsers}\n`;
-        message += `   🍽️ Кормлений сегодня: ${stats.todayFeedings}\n`;
-        message += `   📈 Всего кормлений: ${stats.totalFeedings}`;
-
-        ctx.reply(message);
-    } catch (error) {
-        console.error('Ошибка в команде /status:', error);
-        ctx.reply(MessageFormatter.error('Ошибка при получении статуса. ' + UI_TEXTS.common.tryAgain));
     }
 });
 
