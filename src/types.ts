@@ -54,6 +54,8 @@ export interface ExtendedBotContext {
         text: string;
     };
     database?: DatabaseService;
+    timerService?: any; // TimerService из services/timer
+    schedulerService?: any; // SchedulerService из services/scheduler
     [key: string]: any;
 }
 

@@ -3,53 +3,20 @@ import * as dotenv from 'dotenv';
 import { BotContext, BotState, DatabaseBotState } from './types';
 import { TimerService } from './services/timer';
 import { DatabaseService } from './services/database';
-import {
-    mainScene,
-    setGlobalServices,
-    setGlobalDatabaseForMain,
-    getOrCreateUser,
-} from './scenes/main';
-import { setGlobalServicesForInterval } from './scenes/interval-settings';
-import {
-    otherActionsScene,
-    setGlobalServicesForOtherActions,
-} from './scenes/other-actions';
-import {
-    todayHistoryScene,
-    setGlobalDatabaseForTodayHistory,
-    setGlobalSchedulerForTodayHistory,
-    setGlobalTimerForTodayHistory,
-} from './scenes/today-history';
+import { mainScene, getOrCreateUser } from './scenes/main';
+// interval-settings теперь использует ctx.timerService из middleware
+import { otherActionsScene } from './scenes/other-actions';
+import { todayHistoryScene } from './scenes/today-history';
 import { settingsScene } from './scenes/settings';
 import { historyScene } from './scenes/history';
 import { intervalSettingsScene } from './scenes/interval-settings';
-import {
-    foodSettingsScene,
-    setGlobalDatabaseForFoodSettings,
-} from './scenes/food-settings';
-import {
-    feedingDetailsScene,
-    setGlobalDatabaseForFeedingDetails,
-} from './scenes/feeding-details';
-import {
-    notificationSettingsScene,
-    setGlobalDatabaseForNotificationSettings,
-} from './scenes/notification-settings';
+import { foodSettingsScene } from './scenes/food-settings';
+import { feedingDetailsScene } from './scenes/feeding-details';
+import { notificationSettingsScene } from './scenes/notification-settings';
 import { exportScene } from './scenes/export';
-import {
-    scheduleFeedingScene,
-    setGlobalSchedulerForScheduleFeeding,
-    setGlobalDatabaseForScheduleFeeding,
-} from './scenes/schedule-feeding';
-import {
-    scheduledListScene,
-    setGlobalSchedulerForScheduledList,
-} from './scenes/scheduled-list';
-import {
-    fullHistoryScene,
-    setGlobalSchedulerForFullHistory,
-    setGlobalTimerForFullHistory,
-} from './scenes/full-history';
+import { scheduleFeedingScene } from './scenes/schedule-feeding';
+import { scheduledListScene } from './scenes/scheduled-list';
+import { fullHistoryScene } from './scenes/full-history';
 import { SchedulerService } from './services/scheduler';
 import { SCENES } from './utils/constants';
 import { TimeParser } from './services/time-parser';
@@ -119,23 +86,11 @@ const timerService = new TimerService(bot, database);
 const schedulerService = new SchedulerService(database, timerService);
 const accessControlService = new AccessControlService();
 
-// Установка глобальных сервисов для сцен
-setGlobalServices(timerService, database);
-setGlobalServicesForInterval(timerService, database);
-setGlobalDatabaseForMain(database);
-setGlobalServicesForOtherActions(timerService, database, getOrCreateUser);
-setGlobalDatabaseForTodayHistory(database);
-setGlobalDatabaseForFoodSettings(database);
-setGlobalDatabaseForFeedingDetails(database);
-setGlobalDatabaseForNotificationSettings(database);
-setGlobalSchedulerForScheduleFeeding(schedulerService);
-setGlobalDatabaseForScheduleFeeding(database);
-setGlobalSchedulerForScheduledList(schedulerService);
-setGlobalSchedulerForTodayHistory(schedulerService);
-setGlobalSchedulerForFullHistory(schedulerService);
-setGlobalTimerForTodayHistory(timerService);
-setGlobalTimerForFullHistory(timerService);
-setGlobalTimerForTodayHistory(timerService);
+// ВСЕ сцены (включая main) теперь используют сервисы из middleware:
+// - ctx.database (все сцены)
+// - ctx.timerService (main, interval-settings, other-actions, today-history)
+// - ctx.schedulerService (today-history, full-history, schedule-feeding, scheduled-list)
+// Глобальные переменные и функции setGlobal* ПОЛНОСТЬЮ удалены!
 
 // Настройка сцен
 const stage = new Scenes.Stage<BotContext>([
@@ -235,17 +190,17 @@ bot.command('access', async ctx => {
             const allowedUsers = accessControlService.getAllowedUsers();
             let message = `🔐 Управление доступом:\n\n`;
             message += `👥 Разрешенных пользователей: ${accessControlService.getAllowedUsersCount()}\n\n`;
-            
+
             if (allowedUsers.length > 0) {
                 message += `📋 Список разрешенных ID:\n`;
                 message += allowedUsers.map(id => `  • ${id}`).join('\n');
             }
-            
+
             message += `\n\n📖 Команды:\n`;
             message += `• /access add <user_id> - добавить пользователя\n`;
             message += `• /access remove <user_id> - удалить пользователя\n`;
             message += `• /access reload - перезагрузить список из файла`;
-            
+
             await ctx.reply(message);
             return;
         }
@@ -297,14 +252,14 @@ bot.command('users', async ctx => {
         }
 
         const users = await database.getAllUsers();
-        
+
         if (users.length === 0) {
             await ctx.reply('📋 В базе данных нет пользователей');
             return;
         }
 
         let message = `👥 Пользователи в базе данных (${users.length}):\n\n`;
-        
+
         users.forEach((user, index) => {
             message += `${index + 1}. ${user.username || 'Без имени'}\n`;
             message += `   • ID: ${user.telegramId}\n`;
@@ -320,7 +275,7 @@ bot.command('users', async ctx => {
         if (message.length > 4000) {
             const chunks = [];
             let currentChunk = `👥 Пользователи в базе данных (${users.length}):\n\n`;
-            
+
             users.forEach((user, index) => {
                 const userInfo = `${index + 1}. ${user.username || 'Без имени'}\n` +
                     `   • ID: ${user.telegramId}\n` +
@@ -328,7 +283,7 @@ bot.command('users', async ctx => {
                     `   • Интервал: ${user.feedingInterval} мин\n` +
                     (user.timezone ? `   • Часовой пояс: ${user.timezone}\n` : '') +
                     `   • Создан: ${user.createdAt.toLocaleDateString()}\n\n`;
-                
+
                 if (currentChunk.length + userInfo.length > 4000) {
                     chunks.push(currentChunk);
                     currentChunk = userInfo;
@@ -336,11 +291,11 @@ bot.command('users', async ctx => {
                     currentChunk += userInfo;
                 }
             });
-            
+
             if (currentChunk.length > 0) {
                 chunks.push(currentChunk);
             }
-            
+
             for (const chunk of chunks) {
                 await ctx.reply(chunk);
             }
@@ -371,14 +326,14 @@ bot.command('finduser', async ctx => {
         }
 
         const users = await database.findUsersByUsername(searchTerm);
-        
+
         if (users.length === 0) {
             await ctx.reply(`🔍 Пользователи с именем "${searchTerm}" не найдены`);
             return;
         }
 
         let message = `🔍 Найдено пользователей: ${users.length}\n\n`;
-        
+
         users.forEach((user, index) => {
             message += `${index + 1}. ${user.username || 'Без имени'}\n`;
             message += `   • ID: ${user.telegramId}\n`;
@@ -445,11 +400,11 @@ bot.command('deleteuser', async ctx => {
 
             deletionResult = await database.deleteUserByUsername(input);
         }
-        
+
         if (deletionResult.deleted && deletionResult.user) {
             // Также удаляем из списка разрешенных пользователей
             accessControlService.removeUser(deletionResult.user.telegramId);
-            
+
             await ctx.reply(
                 `✅ Пользователь удален из базы данных:\n` +
                 `• Имя: ${deletionResult.user.username || 'Не указано'}\n` +
@@ -457,7 +412,7 @@ bot.command('deleteuser', async ctx => {
                 `• Удалены все связанные данные: кормления, расписания\n` +
                 `• Удален из списка разрешенных пользователей`
             );
-            
+
             console.log(`Пользователь ${deletionResult.user.telegramId} (${deletionResult.user.username}) удален из базы данных администратором ${userId}`);
         } else {
             await ctx.reply(`❌ Пользователь "${input}" не найден в базе данных`);
@@ -468,19 +423,27 @@ bot.command('deleteuser', async ctx => {
     }
 });
 
-// Middleware для сессий и сцен
+// Middleware для сессий
 bot.use(session());
-bot.use(stage.middleware());
+
+// Middleware для установки services в контексте
+// ВАЖНО: Должен быть ДО stage.middleware(), чтобы сервисы были доступны в сценах
+bot.use((ctx, next) => {
+    ctx.database = database;
+    ctx.timerService = timerService;
+    ctx.schedulerService = schedulerService;
+    return next();
+});
 
 // Middleware для проверки доступа пользователей
 bot.use(async (ctx, next) => {
     // Проверяем доступ только для пользователей (не для каналов/групп)
     if (ctx.from && ctx.from.id) {
         const userId = ctx.from.id;
-        
+
         if (!accessControlService.isUserAllowed(userId)) {
             console.log(`Доступ запрещен для пользователя ${userId} (${ctx.from.username || ctx.from.first_name})`);
-            
+
             await ctx.reply(
                 '🚫 Доступ запрещен\n\n' +
                 'Этот бот доступен только для авторизованных пользователей.\n' +
@@ -489,15 +452,12 @@ bot.use(async (ctx, next) => {
             return; // Прерываем выполнение, не вызываем next()
         }
     }
-    
+
     return next();
 });
 
-// Middleware для установки database в контексте
-bot.use((ctx, next) => {
-    ctx.database = database;
-    return next();
-});
+// Middleware для сцен - должен быть ПОСЛЕ установки сервисов
+bot.use(stage.middleware());
 
 // // Middleware для автоматического определения и сохранения часового пояса пользователя
 // bot.use(async (ctx, next) => {

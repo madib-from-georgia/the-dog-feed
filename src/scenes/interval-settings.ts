@@ -1,35 +1,33 @@
-import { Scenes, Markup } from 'telegraf';
+import { Scenes } from 'telegraf';
 import { BotContext } from '../types';
 import { TimeParser } from '../services/time-parser';
 import { SCENES } from '../utils/constants';
+import { registerCommonNavigationHandlers, getBackAndHomeKeyboard } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter } from '../ui/messages';
 
 export const intervalSettingsScene = new Scenes.BaseScene<BotContext>(
     SCENES.INTERVAL_SETTINGS
 );
 
-// Глобальные переменные для доступа к сервисам (будут установлены из bot.ts)
-let globalTimerService: any = null;
-let globalBotState: any = null;
-
-// Функция для установки глобальных сервисов
-export function setGlobalServicesForInterval(timerService: any, botState: any) {
-    globalTimerService = timerService;
-    globalBotState = botState;
-}
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(intervalSettingsScene, {
+    hasBackButton: true,
+    backTo: SCENES.SETTINGS
+});
 
 // Вход в сцену настройки интервала
 intervalSettingsScene.enter(ctx => {
     let currentInterval = 210; // 3.5 часа по умолчанию
 
     // Получаем текущий интервал из timerService, если доступен
-    if (globalTimerService) {
-        currentInterval = globalTimerService.getCurrentInterval();
+    if (ctx.timerService) {
+        currentInterval = ctx.timerService.getCurrentInterval();
     }
 
     const formattedInterval = TimeParser.formatInterval(currentInterval);
 
     const message =
-        `⏰ интервал\n\n` +
+        `${UI_TEXTS.settings.intervalHeader}\n\n` +
         `Текущий интервал: ${formattedInterval}\n\n` +
         `Введите новый интервал (от 1 минуты до 24 часов):\n\n` +
         `Примеры форматов:\n` +
@@ -37,22 +35,15 @@ intervalSettingsScene.enter(ctx => {
             .map(example => `• ${example}`)
             .join('\n');
 
-    ctx.reply(message, Markup.keyboard([['🏠 На главную']]).resize());
+    ctx.reply(message, getBackAndHomeKeyboard());
 });
 
 // Обработка ввода интервала
 intervalSettingsScene.on('text', ctx => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text || '';
 
-    // Проверка на кнопку "На главную"
-    if (text.includes('🏠 На главную')) {
-        ctx.scene.enter(SCENES.MAIN);
-        return;
-    }
-
-    // Проверка на кнопку "Назад"
-    if (text.includes('⬅️ Назад')) {
-        ctx.scene.enter(SCENES.SETTINGS);
+    // Пропускаем навигационные кнопки и команды
+    if (text.includes('🏠 На главную') || text.includes('⬅️ Назад') || text.startsWith('/')) {
         return;
     }
 
@@ -61,9 +52,8 @@ intervalSettingsScene.on('text', ctx => {
 
     if (!parsed.isValid) {
         ctx.reply(
-            `❌ Ошибка: ${parsed.error}\n\n` +
-                `Попробуйте еще раз или используйте примеры выше.`,
-            Markup.keyboard([['🏠 На главную']]).resize()
+            MessageFormatter.error(`${parsed.error}\n\nПопробуйте еще раз или используйте примеры выше.`),
+            getBackAndHomeKeyboard()
         );
         return;
     }
@@ -74,25 +64,23 @@ intervalSettingsScene.on('text', ctx => {
     }
     ctx.session.feedingInterval = parsed.minutes;
 
-    // Обновление интервала в сервисе таймеров (используем глобальный сервис)
-    if (globalTimerService) {
-        globalTimerService.updateInterval(parsed.minutes);
+    // Обновление интервала в сервисе таймеров
+    if (ctx.timerService) {
+        ctx.timerService.updateInterval(parsed.minutes);
         console.log(
             `Интервал обновлен в timerService: ${parsed.minutes} минут`
         );
     } else {
-        console.error(
-            'globalTimerService не доступен для обновления интервала'
-        );
+        console.error(UI_TEXTS.errors.timerNotInitialized);
     }
 
     const formattedInterval = TimeParser.formatInterval(parsed.minutes);
 
     ctx.reply(
-        `✅ Интервал кормления обновлен!\n\n` +
-            `Новый интервал: ${formattedInterval}\n\n` +
-            `Изменения вступят в силу после следующего кормления.`,
-        Markup.keyboard([['⬅️ Назад', '🏠 На главную']]).resize()
+        MessageFormatter.success(UI_TEXTS.settings.intervalUpdated) +
+            `\n\nНовый интервал: ${formattedInterval}\n\n` +
+            UI_TEXTS.settings.changesApplied,
+        getBackAndHomeKeyboard()
     );
 
     console.log(

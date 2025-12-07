@@ -1,22 +1,27 @@
-import { Scenes } from 'telegraf';
+import { Scenes, Markup } from 'telegraf';
 import { BotContext } from '../types';
-import { getScheduledListKeyboard } from '../utils/keyboards';
-import { MESSAGES, SCENES } from '../utils/constants';
-import { SchedulerService } from '../services/scheduler';
+import { SCENES } from '../utils/constants';
+import { ScheduledFeeding } from '../services/scheduler';
 import { formatDateTime } from '../utils/time-utils';
 import { createUserLink } from '../utils/user-utils';
-
-let globalSchedulerService: SchedulerService | null = null;
-
-export function setGlobalSchedulerForScheduledList(
-    schedulerService: SchedulerService
-) {
-    globalSchedulerService = schedulerService;
-}
+import { registerCommonNavigationHandlers } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter } from '../ui/messages';
 
 export const scheduledListScene = new Scenes.BaseScene<BotContext>(
     SCENES.SCHEDULED_LIST
 );
+
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(scheduledListScene);
+
+// Клавиатура списка запланированных
+function getScheduledListKeyboard() {
+    return Markup.keyboard([
+        ['📅 Создать новое кормление'],
+        ['❌ Отменить все'],
+        ['🏠 На главную'],
+    ]).resize();
+}
 
 // Вход в сцену списка запланированных кормлений
 scheduledListScene.enter(async ctx => {
@@ -25,9 +30,9 @@ scheduledListScene.enter(async ctx => {
 
 // Функция для отображения списка запланированных кормлений
 async function showScheduledList(ctx: BotContext) {
-    if (!globalSchedulerService) {
+    if (!ctx.schedulerService || !ctx.database) {
         ctx.reply(
-            '❌ Сервис планировщика не инициализирован. Попробуйте позже.',
+            UI_TEXTS.errors.servicesNotInitialized,
             getScheduledListKeyboard()
         );
         return;
@@ -35,23 +40,23 @@ async function showScheduledList(ctx: BotContext) {
 
     try {
         const scheduledFeedings =
-            await globalSchedulerService.getActiveScheduledFeedings();
+            await ctx.schedulerService.getActiveScheduledFeedings();
 
         if (scheduledFeedings.length === 0) {
             ctx.reply(
-                `${MESSAGES.SCHEDULED_LIST_EMPTY}\n\n` +
-                    'Вы можете создать новое запланированное кормление.',
+                `📋 Нет запланированных кормлений\n\nВы можете создать новое запланированное кормление.`,
                 getScheduledListKeyboard()
             );
             return;
         }
 
-        let message = `${MESSAGES.SCHEDULED_LIST_HEADER}\n\n`;
+        let message = `📋 Запланированные кормления\n\n`;
         message += `📊 Активных кормлений: ${scheduledFeedings.length}\n\n`;
 
         // Сортируем по времени
         scheduledFeedings.sort(
-            (a, b) => a.scheduledTime.getTime() - b.scheduledTime.getTime()
+            (a: ScheduledFeeding, b: ScheduledFeeding) =>
+                a.scheduledTime.getTime() - b.scheduledTime.getTime()
         );
 
         for (const schedule of scheduledFeedings) {
@@ -130,11 +135,8 @@ scheduledListScene.hears(/❌ Отменить кормление (\d+)/, async 
 
     const scheduleId = parseInt(match[1], 10);
 
-    if (!globalSchedulerService) {
-        ctx.reply(
-            '❌ Сервис планировщика не инициализирован. Попробуйте позже.',
-            getScheduledListKeyboard()
-        );
+    if (!ctx.schedulerService || !ctx.database) {
+        ctx.reply(UI_TEXTS.errors.servicesNotInitialized, getScheduledListKeyboard());
         return;
     }
 
@@ -144,7 +146,7 @@ scheduledListScene.hears(/❌ Отменить кормление (\d+)/, async 
 
         if (!schedule) {
             ctx.reply(
-                `❌ Кормление с ID ${scheduleId} не найдено.`,
+                MessageFormatter.error(`Кормление с ID ${scheduleId} не найдено.`),
                 getScheduledListKeyboard()
             );
             return;
@@ -152,14 +154,14 @@ scheduledListScene.hears(/❌ Отменить кормление (\d+)/, async 
 
         if (!schedule.isActive) {
             ctx.reply(
-                `❌ Кормление с ID ${scheduleId} уже отменено.`,
+                MessageFormatter.error(`Кормление с ID ${scheduleId} уже отменено.`),
                 getScheduledListKeyboard()
             );
             return;
         }
 
         // Отменяем кормление
-        await globalSchedulerService.cancelScheduledFeeding(scheduleId);
+        await ctx.schedulerService.cancelScheduledFeeding(scheduleId);
 
         // Создаем объект, соответствующий интерфейсу DatabaseUser
         const dbUser = {
@@ -174,23 +176,18 @@ scheduledListScene.hears(/❌ Отменить кормление (\d+)/, async 
         const username = createUserLink(dbUser);
 
         // Получаем пользователя из базы данных для получения часового пояса
-        let cancellingUser = null;
-        if (ctx.database) {
-            cancellingUser = await ctx.database.getUserByTelegramId(
-                ctx.from!.id
-            );
-        }
+        const cancellingUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
         ctx.reply(
-            `✅ Кормление отменено!\n\n` +
-                `🆔 ID: ${scheduleId}\n` +
+            MessageFormatter.success('Кормление отменено!') +
+                `\n\n🆔 ID: ${scheduleId}\n` +
                 `📅 Было запланировано на: ${formatDateTime(schedule.scheduledTime, cancellingUser?.timezone)}\n` +
                 `👤 Отменил: ${username}`
         );
 
         // Уведомляем всех пользователей об отмене
         const notificationService =
-            globalSchedulerService['timerService'].getNotificationService();
+            ctx.schedulerService['timerService'].getNotificationService();
         const notificationMessage =
             `❌ Отменено запланированное кормление\n\n` +
             `⏰ Время: ${formatDateTime(schedule.scheduledTime, cancellingUser?.timezone)}\n` +
@@ -205,7 +202,7 @@ scheduledListScene.hears(/❌ Отменить кормление (\d+)/, async 
     } catch (error) {
         console.error('Ошибка при отмене кормления:', error);
         ctx.reply(
-            `❌ Ошибка при отмене кормления ${scheduleId}. Попробуйте позже.`,
+            MessageFormatter.error(`Ошибка при отмене кормления ${scheduleId}. ${UI_TEXTS.common.tryAgain}`),
             getScheduledListKeyboard()
         );
     }
@@ -218,21 +215,18 @@ scheduledListScene.hears(/📅 Создать новое кормление/, ct
 
 // Обработка кнопки "Отменить все"
 scheduledListScene.hears(/❌ Отменить все/, async ctx => {
-    if (!globalSchedulerService) {
-        ctx.reply(
-            '❌ Сервис планировщика не инициализирован. Попробуйте позже.',
-            getScheduledListKeyboard()
-        );
+    if (!ctx.schedulerService || !ctx.database) {
+        ctx.reply(UI_TEXTS.errors.servicesNotInitialized, getScheduledListKeyboard());
         return;
     }
 
     try {
         const cancelledCount =
-            await globalSchedulerService.cancelAllScheduledFeedings();
+            await ctx.schedulerService.cancelAllScheduledFeedings();
 
         if (cancelledCount === 0) {
             ctx.reply(
-                '📋 Нет активных кормлений для отмены.',
+                MessageFormatter.info('Нет активных кормлений для отмены', '📋'),
                 getScheduledListKeyboard()
             );
             return;
@@ -251,14 +245,14 @@ scheduledListScene.hears(/❌ Отменить все/, async ctx => {
         const username = createUserLink(dbUser);
 
         ctx.reply(
-            `✅ Все кормления отменены!\n\n` +
-                `📊 Отменено: ${cancelledCount} кормлений\n` +
+            MessageFormatter.success('Все кормления отменены!') +
+                `\n\n📊 Отменено: ${cancelledCount} кормлений\n` +
                 `👤 Отменил: ${username}`
         );
 
         // Уведомляем всех пользователей об отмене всех кормлений
         const notificationService =
-            globalSchedulerService['timerService'].getNotificationService();
+            ctx.schedulerService['timerService'].getNotificationService();
         const notificationMessage =
             `❌ Отменены все запланированные кормления\n\n` +
             `📊 Количество: ${cancelledCount}\n` +
@@ -273,33 +267,23 @@ scheduledListScene.hears(/❌ Отменить все/, async ctx => {
     } catch (error) {
         console.error('Ошибка при отмене всех кормлений:', error);
         ctx.reply(
-            '❌ Ошибка при отмене всех кормлений. Попробуйте позже.',
+            MessageFormatter.error('Ошибка при отмене всех кормлений. ' + UI_TEXTS.common.tryAgain),
             getScheduledListKeyboard()
         );
     }
 });
 
-// Обработка кнопки "На главную"
-scheduledListScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
-// Обработка команды /home
-scheduledListScene.command('home', ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
 // Обработка неизвестных команд
 scheduledListScene.on('text', ctx => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text || '';
 
-    // Пропускаем команды, начинающиеся с /
-    if (text.startsWith('/')) {
+    // Пропускаем команды и навигационные кнопки
+    if (text.startsWith('/') || text.includes('🏠')) {
         return;
     }
 
     ctx.reply(
-        'Используйте кнопки меню для управления запланированными кормлениями.',
+        UI_TEXTS.navigation.useButtons,
         getScheduledListKeyboard()
     );
 });

@@ -1,65 +1,46 @@
 import { Scenes, Markup } from 'telegraf';
 import { BotContext } from '../types';
 import { SCENES } from '../utils/constants';
-import {
-    DatabaseService,
-    DatabaseFeeding,
-    DatabaseUser,
-} from '../services/database';
+import { DatabaseUser, DatabaseFeeding } from '../services/database';
 import { ScheduledFeeding } from '../services/scheduler';
-import { TimerService } from '../services/timer';
 import { formatDateTime } from '../utils/time-utils';
 import { createUserLink } from '../utils/user-utils';
+import { registerCommonNavigationHandlers } from '../ui/navigation';
+import { UI_TEXTS } from '../ui/messages';
 
 export const todayHistoryScene = new Scenes.BaseScene<BotContext>(
     SCENES.TODAY_HISTORY
 );
 
-// Глобальные переменные для доступа к сервисам
-let globalDatabase: DatabaseService | null = null;
-let globalSchedulerService: any = null;
-let globalTimerService: TimerService | null = null;
-
-// Функция для установки глобальной базы данных
-export function setGlobalDatabaseForTodayHistory(database: DatabaseService) {
-    globalDatabase = database;
-}
-
-// Функция для установки глобального сервиса планировщика
-export function setGlobalSchedulerForTodayHistory(schedulerService: any) {
-    globalSchedulerService = schedulerService;
-}
-
-// Функция для установки глобального сервиса таймера
-export function setGlobalTimerForTodayHistory(timerService: TimerService) {
-    globalTimerService = timerService;
-}
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(todayHistoryScene, {
+    hasBackButton: true,
+    backTo: SCENES.HISTORY
+});
 
 // Вход в сцену истории за сегодня
 todayHistoryScene.enter(async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply(
-                'Ошибка: база данных не инициализирована. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
         // Получаем кормления за сегодня
-        const todayFeedings = await globalDatabase.getTodayFeedings();
-        const allUsers = await globalDatabase.getAllUsers();
+        const todayFeedings = await ctx.database.getTodayFeedings();
+        const allUsers = await ctx.database.getAllUsers();
 
         // Создаем карту пользователей для быстрого поиска
         const usersMap = new Map<number, DatabaseUser>();
-        allUsers.forEach(user => usersMap.set(user.id, user));
+        allUsers.forEach((user: DatabaseUser) => usersMap.set(user.id, user));
 
         let message = '📅 *История кормлений за сегодня*\n\n';
 
         // Получаем запланированные кормления
-        if (globalSchedulerService) {
+        if (ctx.schedulerService) {
             try {
                 const scheduledFeedings: ScheduledFeeding[] =
-                    await globalSchedulerService.getActiveScheduledFeedings();
+                    await ctx.schedulerService.getActiveScheduledFeedings();
                 const now = new Date();
 
                 // Фильтруем только будущие кормления
@@ -131,7 +112,7 @@ todayHistoryScene.enter(async ctx => {
             message += `📊 Всего кормлений: ${todayFeedings.length}\n\n`;
 
             // Группируем кормления по времени
-            todayFeedings.forEach((feeding, index) => {
+            todayFeedings.forEach((feeding: DatabaseFeeding, index: number) => {
                 const user = usersMap.get(feeding.userId) || null;
                 const username = createUserLink(user);
                 const timeStr = formatDateTime(
@@ -157,7 +138,7 @@ todayHistoryScene.enter(async ctx => {
 
             // Добавляем статистику
             const totalAmount = todayFeedings.reduce(
-                (sum, feeding) => sum + feeding.amount,
+                (sum: number, feeding: DatabaseFeeding) => sum + feeding.amount,
                 0
             );
             message += `\n📈 *Общий объем:* ${totalAmount}г`;
@@ -193,7 +174,7 @@ todayHistoryScene.enter(async ctx => {
         }
 
         // Получаем статистику
-        const stats = await globalDatabase.getStats();
+        const stats = await ctx.database.getStats();
         message += `\n\n📊 *Общая статистика:*\n`;
         message += `• Всего кормлений: ${stats.totalFeedings}\n`;
         message += `• Пользователей: ${stats.totalUsers}`;
@@ -225,36 +206,26 @@ todayHistoryScene.hears(/📋 Вся история/, ctx => {
     ctx.scene.enter(SCENES.HISTORY);
 });
 
-// Обработка кнопки "Назад"
-todayHistoryScene.hears(/⬅️ Назад/, ctx => {
-    ctx.scene.enter(SCENES.HISTORY);
-});
-
-// Обработка кнопки "Главный экран"
+// Обработка кнопки "Главный экран" (дополнительная)
 todayHistoryScene.hears(/🏠 Главный экран/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
-// Обработка команды /home
-todayHistoryScene.command('home', ctx => {
     ctx.scene.enter(SCENES.MAIN);
 });
 
 // Обработка команды /status
 todayHistoryScene.command('status', async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply('Ошибка: база данных не инициализирована.');
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
-        const lastFeeding = await globalDatabase.getLastFeeding();
-        const stats = await globalDatabase.getStats();
+        const lastFeeding = await ctx.database.getLastFeeding();
+        const stats = await ctx.database.getStats();
 
         let message = '📊 Статус кормления:\n\n';
 
         if (lastFeeding) {
-            const lastUser = await globalDatabase.getUserByTelegramId(
+            const lastUser = await ctx.database.getUserByTelegramId(
                 ctx.from?.id || 0
             );
             const username = createUserLink(lastUser);
@@ -282,16 +253,16 @@ todayHistoryScene.command('status', async ctx => {
     }
 });
 
-// Обработка неизвестных команд (но не команд, начинающихся с /)
+// Обработка неизвестных команд
 todayHistoryScene.on('text', ctx => {
-    const text = ctx.message.text;
-    // Пропускаем команды, начинающиеся с /
-    if (text.startsWith('/')) {
+    const text = (ctx.message as any)?.text || '';
+    // Пропускаем команды и навигационные кнопки
+    if (text.startsWith('/') || text.includes('🏠') || text.includes('⬅️')) {
         return;
     }
 
     ctx.reply(
-        'Я не понимаю эту команду. Используйте кнопки меню.',
+        UI_TEXTS.navigation.unknownCommand,
         Markup.keyboard([
             ['🔄 Обновить'],
             ['⬅️ Назад', '🏠 Главный экран'],

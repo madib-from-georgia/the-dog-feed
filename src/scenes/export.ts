@@ -1,10 +1,22 @@
 import { Scenes } from 'telegraf';
 import { BotContext } from '../types';
-import { getExportKeyboard } from '../utils/keyboards';
-import { MESSAGES, SCENES, EXPORT_SETTINGS } from '../utils/constants';
+import { SCENES, EXPORT_SETTINGS } from '../utils/constants';
 import { ExportService } from '../services/export';
+import { registerCommonNavigationHandlers, createNavigationKeyboard } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter } from '../ui/messages';
 
 export const exportScene = new Scenes.BaseScene<BotContext>(SCENES.EXPORT);
+
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(exportScene);
+
+// Клавиатура экспорта
+function getExportKeyboard() {
+    return createNavigationKeyboard([
+        ['📋 CSV формат', '🌐 HTML формат'],
+        ['📅 За неделю', '🗓️ За месяц', '📊 Все время'],
+    ]);
+}
 
 // Вход в сцену экспорта
 exportScene.enter(ctx => {
@@ -15,31 +27,25 @@ exportScene.enter(ctx => {
         step: 'format', // format -> period -> process
     };
 
-    ctx.reply(MESSAGES.EXPORT_MENU, getExportKeyboard());
+    ctx.reply(UI_TEXTS.export.header, getExportKeyboard());
 });
 
 // Обработка выбора формата CSV
 exportScene.hears(/📋 CSV формат/, ctx => {
     ctx.session.export.format = 'csv';
-    ctx.reply(
-        '📋 Выбран CSV формат\n\n' + 'Теперь выберите период для экспорта:',
-        getExportKeyboard()
-    );
+    ctx.reply(UI_TEXTS.export.csvSelected, getExportKeyboard());
 });
 
 // Обработка выбора формата HTML
 exportScene.hears(/🌐 HTML формат/, ctx => {
     ctx.session.export.format = 'html';
-    ctx.reply(
-        '🌐 Выбран HTML формат\n\n' + 'Теперь выберите период для экспорта:',
-        getExportKeyboard()
-    );
+    ctx.reply(UI_TEXTS.export.htmlSelected, getExportKeyboard());
 });
 
 // Обработка выбора периода "За неделю"
 exportScene.hears(/📅 За неделю/, async ctx => {
     if (!ctx.session.export.format) {
-        ctx.reply('❌ Сначала выберите формат файла.', getExportKeyboard());
+        ctx.reply(UI_TEXTS.export.selectFormat, getExportKeyboard());
         return;
     }
 
@@ -49,7 +55,7 @@ exportScene.hears(/📅 За неделю/, async ctx => {
 // Обработка выбора периода "За месяц"
 exportScene.hears(/🗓️ За месяц/, async ctx => {
     if (!ctx.session.export.format) {
-        ctx.reply('❌ Сначала выберите формат файла.', getExportKeyboard());
+        ctx.reply(UI_TEXTS.export.selectFormat, getExportKeyboard());
         return;
     }
 
@@ -59,7 +65,7 @@ exportScene.hears(/🗓️ За месяц/, async ctx => {
 // Обработка выбора периода "Все время"
 exportScene.hears(/📊 Все время/, async ctx => {
     if (!ctx.session.export.format) {
-        ctx.reply('❌ Сначала выберите формат файла.', getExportKeyboard());
+        ctx.reply(UI_TEXTS.export.selectFormat, getExportKeyboard());
         return;
     }
 
@@ -105,7 +111,7 @@ async function processExport(
         // Показываем информацию об экспорте
         const fileSizeKB = Math.round(result.fileSize / 1024);
         ctx.reply(
-            `${MESSAGES.EXPORT_SUCCESS}\n\n` +
+            `${UI_TEXTS.export.success}\n\n` +
                 `📄 Файл: ${result.fileName}\n` +
                 `📊 Записей: ${result.recordCount}\n` +
                 `📁 Размер: ${fileSizeKB} КБ\n\n` +
@@ -115,36 +121,26 @@ async function processExport(
     } catch (error) {
         console.error('Ошибка при экспорте:', error);
 
-        let errorMessage = MESSAGES.EXPORT_ERROR;
+        let errorMessage = UI_TEXTS.export.error;
 
         if (error instanceof Error) {
             if (error.message === 'Нет данных для экспорта') {
-                errorMessage = MESSAGES.NO_FEEDINGS_FOUND;
+                errorMessage = UI_TEXTS.history.noFeedings;
             } else {
                 errorMessage += `\n\nОшибка: ${error.message}`;
             }
         }
 
-        ctx.reply(errorMessage, getExportKeyboard());
+        ctx.reply(MessageFormatter.error(errorMessage), getExportKeyboard());
     }
 }
 
-// Обработка кнопки "На главную"
-exportScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
-// Обработка команды /home
-exportScene.command('home', ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
 // Обработка неизвестных команд
 exportScene.on('text', ctx => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text || '';
 
-    // Пропускаем команды, начинающиеся с /
-    if (text.startsWith('/')) {
+    // Пропускаем команды и навигационные кнопки
+    if (text.startsWith('/') || text.includes('🏠 На главную')) {
         return;
     }
 

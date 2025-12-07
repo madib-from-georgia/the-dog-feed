@@ -1,45 +1,31 @@
-import { Scenes, Markup } from 'telegraf';
+import { Scenes } from 'telegraf';
 import { BotContext, User, Feeding } from '../types';
-import { DatabaseService } from '../services/database';
 import { getMainKeyboard } from '../utils/keyboards';
-import { MESSAGES, SCENES } from '../utils/constants';
-import { formatDateTime } from '../utils/time-utils';
+import { SCENES } from '../utils/constants';
+import { formatDateTime, formatInterval } from '../utils/time-utils';
 import { createUserLink } from '../utils/user-utils';
-import {
-    getTimeOffsetInMinutes,
-    getTimezoneByOffset,
-} from '../utils/timezone-utils';
+import { registerCommonNavigationHandlers } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter, MessageBuilder } from '../ui/messages';
 
 export const mainScene = new Scenes.BaseScene<BotContext>(SCENES.MAIN);
 
-// Глобальные переменные для доступа к сервисам (будут установлены из bot.ts)
-let globalTimerService: any = null;
-let globalDatabase: DatabaseService | null = null;
-
-// Функция для установки глобальных сервисов
-export function setGlobalServices(timerService: any, database: any) {
-    globalTimerService = timerService;
-    globalDatabase = database;
-}
-
-// Функция для установки глобальной базы данных
-export function setGlobalDatabaseForMain(database: DatabaseService) {
-    globalDatabase = database;
-}
-
-// Функция для получения или создания пользователя
-async function getOrCreateUser(
+/**
+ * Функция для получения или создания пользователя
+ * Экспортируется для использования в других сценах
+ */
+export async function getOrCreateUser(
+    ctx: BotContext,
     telegramId: number,
     username?: string
 ): Promise<User> {
-    if (!globalDatabase) {
+    if (!ctx.database) {
         throw new Error('Database не инициализирована');
     }
 
-    let user = await globalDatabase.getUserByTelegramId(telegramId);
+    let user = await ctx.database.getUserByTelegramId(telegramId);
 
     if (!user) {
-        user = await globalDatabase.createUser(telegramId, username);
+        user = await ctx.database.createUser(telegramId, username);
         console.log(`Новый пользователь: ${username || telegramId}`);
     }
 
@@ -67,40 +53,43 @@ mainScene.enter(ctx => {
         if (ctx.session) {
             ctx.session.firstVisitDone = true;
         }
-        ctx.reply(MESSAGES.WELCOME, getMainKeyboard(showFeedingDetailsButton));
+        ctx.reply(UI_TEXTS.welcome, getMainKeyboard(showFeedingDetailsButton));
     } else {
         // Последующие переходы - показываем другое сообщение
         ctx.reply(
-            'Возвращаемся на главный экран',
+            UI_TEXTS.navigation.goingHome,
             getMainKeyboard(showFeedingDetailsButton)
         );
     }
 });
 
-// Функция для автоматического определения и сохранения часового пояса пользователя
-async function autoDetectAndSaveTimezone(telegramId: number, db: DatabaseService): Promise<string | null> {
+/**
+ * Автоматическое определение и сохранение часового пояса пользователя
+ */
+async function autoDetectAndSaveTimezone(
+    ctx: BotContext,
+    telegramId: number
+): Promise<string | null> {
+    if (!ctx.database) {
+        return null;
+    }
+
     try {
-        // Получаем пользователя из базы данных
-        let dbUser = await db.getUserByTelegramId(telegramId);
-        
+        let dbUser = await ctx.database.getUserByTelegramId(telegramId);
+
         if (dbUser && !dbUser.timezone) {
-            // Используем фиксированное значение для Москвы, так как у нас нет доступа к времени пользователя в сцене
-            // В будущем можно реализовать более точное определение таймзоны
             const timezone = 'Europe/Moscow';
-            
-            // Сохраняем часовой пояс
-            await db.updateUserTimezone(dbUser.id, timezone);
+            await ctx.database.updateUserTimezone(dbUser.id, timezone);
             console.log(
                 `Установлен часовой пояс для пользователя ${dbUser.username || dbUser.telegramId}: ${timezone}`
             );
-            
             return timezone;
         }
-        
+
         return dbUser?.timezone || null;
     } catch (error) {
         console.error(
-            'Ошибка при автоматическом определении часового пояса пользователя:',
+            'Ошибка при автоматическом определении часового пояса:',
             error
         );
         return null;
@@ -115,41 +104,27 @@ mainScene.hears(/Другие действия/, ctx => {
 // Обработка кнопки "Когда следующее кормление?"
 mainScene.hears(/Когда следующее кормление\?/, async ctx => {
     try {
-        if (!globalTimerService) {
-            ctx.reply(
-                'Ошибка: сервис таймера не инициализирован. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.timerService || !ctx.database) {
+            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
             return;
         }
 
-        const nextFeedingInfo = globalTimerService.getNextFeedingInfo();
+        const nextFeedingInfo = ctx.timerService.getNextFeedingInfo();
 
         if (!nextFeedingInfo.isActive || !nextFeedingInfo.time) {
             ctx.reply(
-                '⏹️ Кормления приостановлены.\nЧтобы возобновить, нажмите "🍽️ Собачка поел"'
-            );
-            return;
-        }
-
-        // Проверяем, что globalDatabase инициализирована
-        if (!globalDatabase) {
-            ctx.reply(
-                'Ошибка: база данных не инициализирована. Попробуйте перезапустить бота командой /start'
+                `${UI_TEXTS.status.paused}\nЧтобы возобновить, нажмите "${UI_TEXTS.feeding.buttonText}"`
             );
             return;
         }
 
         // Получаем текущего пользователя для определения его часового пояса
-        const currentUser = await globalDatabase.getUserByTelegramId(
-            ctx.from!.id
-        );
+        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
-        // Форматирование времени следующего кормления с учетом часового пояса пользователя
+        // Форматирование времени следующего кормления
         const nextFeedingTime = nextFeedingInfo.time;
         const timeString = currentUser
-            ? formatDateTime(nextFeedingTime, currentUser.timezone).split(
-                  ' в '
-              )[1]
+            ? formatDateTime(nextFeedingTime, currentUser.timezone).split(' в ')[1]
             : nextFeedingTime.getHours().toString().padStart(2, '0') +
               ':' +
               nextFeedingTime.getMinutes().toString().padStart(2, '0');
@@ -157,28 +132,13 @@ mainScene.hears(/Когда следующее кормление\?/, async ctx 
         // Вычисление времени до следующего кормления
         const now = new Date();
         const timeDiff = nextFeedingTime.getTime() - now.getTime();
-        const hoursDiff = Math.floor(timeDiff / (1000 * 60 * 60));
-        const minutesDiff = Math.floor(
-            (timeDiff % (1000 * 60 * 60)) / (1000 * 60)
-        );
+        const timeDiffString = formatInterval(Math.floor(timeDiff / (1000 * 60)));
 
-        let timeDiffString = '';
-        if (hoursDiff > 0) {
-            timeDiffString = `${hoursDiff} ч ${minutesDiff} мин`;
-        } else {
-            timeDiffString = `${minutesDiff} мин`;
-        }
-
-        ctx.reply(
-            `⏰ Следующее кормление в ${timeString} (через ${timeDiffString})`
-        );
+        ctx.reply(`⏰ Следующее кормление в ${timeString} (через ${timeDiffString})`);
     } catch (error) {
-        console.error(
-            'Ошибка при получении времени следующего кормления:',
-            error
-        );
+        console.error('Ошибка при получении времени следующего кормления:', error);
         ctx.reply(
-            'Произошла ошибка при получении времени следующего кормления. Попробуйте еще раз.'
+            MessageFormatter.error('Произошла ошибка при получении времени следующего кормления. ' + UI_TEXTS.common.tryAgain)
         );
     }
 });
@@ -186,51 +146,41 @@ mainScene.hears(/Когда следующее кормление\?/, async ctx 
 // Обработка кнопки "Собачка поел"
 mainScene.hears(/🍽️ Собачка поел/, async ctx => {
     try {
-        if (!globalTimerService || !globalDatabase) {
-            ctx.reply(
-                'Ошибка: сервисы не инициализированы. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.timerService || !ctx.database) {
+            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
             return;
         }
 
         // Получаем или создаем пользователя в базе данных
-        let dbUser = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        let dbUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
         if (!dbUser) {
-            dbUser = await globalDatabase.createUser(
+            dbUser = await ctx.database.createUser(
                 ctx.from!.id,
                 ctx.from!.username || ctx.from!.first_name
             );
         }
 
-        // Автоматически определяем и сохраняем часовой пояс пользователя, если он еще не определен
-        const timezone = await autoDetectAndSaveTimezone(ctx.from!.id, globalDatabase);
-        
-        // Обновляем таймзону в объекте пользователя для текущего сеанса
-        if (timezone && dbUser) {
+        // Автоматически определяем и сохраняем часовой пояс
+        const timezone = await autoDetectAndSaveTimezone(ctx, ctx.from!.id);
+        if (timezone) {
             dbUser.timezone = timezone;
         }
 
         // Получаем обновленного пользователя с таймзоной
-        const updatedUser = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const updatedUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
         if (updatedUser) {
             dbUser = updatedUser;
         }
 
-        // Также создаем пользователя в старом формате для совместимости с таймерами
-        const user = await getOrCreateUser(
-            ctx.from!.id,
-            ctx.from!.username || ctx.from!.first_name
-        );
-
         // Получаем текущие настройки корма из БД
         const foodType =
-            (await globalDatabase.getSetting('default_food_type')) || 'dry';
+            (await ctx.database.getSetting('default_food_type')) || 'dry';
         const foodAmount = parseInt(
-            (await globalDatabase.getSetting('default_food_amount')) || '12'
+            (await ctx.database.getSetting('default_food_amount')) || '12'
         );
 
-        // Создание записи о кормлении в базе данных с текущими настройками
-        const dbFeeding = await globalDatabase.createFeeding(
+        // Создание записи о кормлении
+        const dbFeeding = await ctx.database.createFeeding(
             dbUser.id,
             foodType,
             foodAmount
@@ -242,52 +192,34 @@ mainScene.hears(/🍽️ Собачка поел/, async ctx => {
         }
         ctx.session.lastFeedingId = dbFeeding.id;
 
-        // Создаем запись в старом формате для совместимости с таймерами
-        const feeding: Feeding = {
-            id: dbFeeding.id,
-            userId: user.id,
-            timestamp: dbFeeding.timestamp,
-            foodType: dbFeeding.foodType,
-            amount: dbFeeding.amount,
-        };
-
         // Запуск таймера на следующее кормление
-        globalTimerService.startFeedingTimer();
+        ctx.timerService.startFeedingTimer();
 
         // Получение информации о следующем кормлении
-        const nextFeedingInfo = globalTimerService.getNextFeedingInfo();
+        const nextFeedingInfo = ctx.timerService.getNextFeedingInfo();
 
-        // Форматирование интервала
-        const intervalMinutes = nextFeedingInfo.intervalMinutes;
-        let intervalText = '';
-        if (intervalMinutes < 60) {
-            intervalText = `${intervalMinutes} мин`;
-        } else {
-            const hours = Math.floor(intervalMinutes / 60);
-            const remainingMinutes = intervalMinutes % 60;
-            if (remainingMinutes === 0) {
-                intervalText = `${hours} ч`;
-            } else {
-                intervalText = `${hours} ч ${remainingMinutes} мин`;
-            }
-        }
+        // Форматирование данных для сообщения
+        const intervalText = formatInterval(nextFeedingInfo.intervalMinutes);
+        const timestamp = formatDateTime(dbFeeding.timestamp, dbUser?.timezone).replace(', ', ' в ');
+        const nextFeedingTime = nextFeedingInfo.time
+            ? formatDateTime(nextFeedingInfo.time, dbUser?.timezone).split(' в ')[1]
+            : 'неизвестно';
 
-        // Форматирование информации о корме
-        const foodInfo = `${foodAmount}г ${foodType === 'dry' ? 'сухого' : 'влажного'} корма`;
+        // Создание сообщения используя MessageBuilder
+        const message = MessageBuilder.feedingNotification({
+            timestamp,
+            username: createUserLink(dbUser),
+            amount: foodAmount,
+            foodType,
+            nextFeedingTime,
+            interval: intervalText
+        });
 
         // Уведомление всех пользователей
-        const message =
-            `🍽️ Собачка вкусно поел!\n\n` +
-            `${formatDateTime(dbFeeding.timestamp, dbUser?.timezone).replace(', ', ' в ')}\n` +
-            `${createUserLink(dbUser)} дал ${foodInfo}\n\n` +
-            `⏰ Следующее кормление в ${nextFeedingInfo.time ? formatDateTime(nextFeedingInfo.time, dbUser?.timezone).split(' в ')[1] : 'неизвестно'} (через ${intervalText})`;
-
-        // Получаем всех пользователей из базы данных для уведомлений
-        const allUsers = await globalDatabase.getAllUsers();
+        const allUsers = await ctx.database.getAllUsers();
         for (const u of allUsers) {
-            // Пропускаем текущего пользователя, так как ему будет отправлено отдельное сообщение
             if (u.telegramId === ctx.from!.id) {
-                continue;
+                continue; // Пропускаем текущего пользователя
             }
 
             if (u.notificationsEnabled) {
@@ -306,131 +238,57 @@ mainScene.hears(/🍽️ Собачка поел/, async ctx => {
             `Кормление записано в БД: ${dbUser.username} в ${dbFeeding.timestamp}`
         );
 
-        // Показываем сообщение об успешном кормлении и обновляем клавиатуру
+        // Показываем сообщение об успешном кормлении
         await ctx.reply(message, getMainKeyboard(true));
     } catch (error) {
         console.error('Ошибка при обработке кормления:', error);
-        ctx.reply('Произошла ошибка при записи кормления. Попробуйте еще раз.');
+        ctx.reply(MessageFormatter.error('Произошла ошибка при записи кормления. ' + UI_TEXTS.common.tryAgain));
     }
 });
 
-// Обработка кнопки "Завершить кормления на сегодня"
-mainScene.hears(/⏹️ Завершить кормления на сегодня/, async ctx => {
-    try {
-        if (!globalTimerService || !globalDatabase) {
-            ctx.reply(
-                'Ошибка: сервисы не инициализированы. Попробуйте перезапустить бота командой /start'
-            );
-            return;
-        }
-
-        const user = await getOrCreateUser(
-            ctx.from!.id,
-            ctx.from!.username || ctx.from!.first_name
-        );
-
-        globalTimerService.stopAllTimers();
-
-        // Создаем объект, соответствующий интерфейсу DatabaseUser
-        const dbUser = {
-            id: user.id,
-            telegramId: user.telegramId,
-            username: user.username,
-            notificationsEnabled: user.notificationsEnabled,
-            feedingInterval: user.feedingInterval || 210, // Значение по умолчанию
-            createdAt: new Date(),
-        };
-
-        const message =
-            `${MESSAGES.FEEDINGS_STOPPED}\n` +
-            `Инициатор: ${createUserLink(dbUser)}\n\n` +
-            `Чтобы возобновить кормления, нажмите "🍽️ Собачка поел"`;
-
-        // Уведомление всех пользователей через базу данных
-        const allUsers = await globalDatabase.getAllUsers();
-        for (const u of allUsers) {
-            if (u.notificationsEnabled) {
-                try {
-                    await ctx.telegram.sendMessage(u.telegramId, message);
-                } catch (error) {
-                    console.error(
-                        `Ошибка отправки сообщения пользователю ${u.telegramId}:`,
-                        error
-                    );
-                }
-            }
-        }
-
-        console.log(`Кормления остановлены пользователем: ${user.username}`);
-
-        // Остаемся на главном экране
-        ctx.reply('Возвращаемся на главный экран', getMainKeyboard());
-    } catch (error) {
-        console.error('Ошибка при остановке кормлений:', error);
-        ctx.reply(
-            'Произошла ошибка при остановке кормлений. Попробуйте еще раз.'
-        );
-    }
-});
+// УДАЛЕНО: Обработчик "Завершить кормления на сегодня"
+// Эта функциональность уже реализована в other-actions.ts
+// Дублирование кода устранено
 
 // Обработка команды /status
 mainScene.command('status', async ctx => {
     try {
-        if (!globalTimerService || !globalDatabase) {
-            ctx.reply(
-                'Ошибка: сервисы не инициализированы. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.timerService || !ctx.database) {
+            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
             return;
         }
 
-        const nextFeeding = globalTimerService.getNextFeedingInfo();
-        const lastFeeding = await globalDatabase.getLastFeeding();
-        const stats = await globalDatabase.getStats();
+        const nextFeeding = ctx.timerService.getNextFeedingInfo();
+        const lastFeeding = await ctx.database.getLastFeeding();
+        const stats = await ctx.database.getStats();
 
         // Получаем текущего пользователя
-        const currentUser = await globalDatabase.getUserByTelegramId(
-            ctx.from!.id
-        );
+        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
-        let message = '📊 Статус кормления:\n\n';
+        let message = `${UI_TEXTS.status.header}`;
 
         if (lastFeeding) {
-            const lastUser = await globalDatabase.getUserById(
-                lastFeeding.userId
-            );
+            const lastUser = await ctx.database.getUserById(lastFeeding.userId);
             const username = createUserLink(lastUser);
-            message += `🍽️ Последнее кормление:\n`;
+            message += `${UI_TEXTS.status.lastFeeding}\n`;
             message += `   Время: ${formatDateTime(lastFeeding.timestamp, lastUser?.timezone)}\n`;
             message += `   Кто: ${username}\n\n`;
         } else {
-            message += `🍽️ Кормлений еще не было\n\n`;
+            message += UI_TEXTS.status.noFeedings;
         }
 
-        // Простое форматирование интервала
-        const intervalMinutes = nextFeeding.intervalMinutes;
-        let intervalText = '';
-        if (intervalMinutes < 60) {
-            intervalText = `${intervalMinutes} мин`;
-        } else {
-            const hours = Math.floor(intervalMinutes / 60);
-            const remainingMinutes = intervalMinutes % 60;
-            if (remainingMinutes === 0) {
-                intervalText = `${hours} ч`;
-            } else {
-                intervalText = `${hours} ч ${remainingMinutes} мин`;
-            }
-        }
-
-        message += `⏰ Интервал кормления: ${intervalText}\n\n`;
+        // Форматирование интервала используя утилиту
+        const intervalText = formatInterval(nextFeeding.intervalMinutes);
+        message += `${UI_TEXTS.status.interval}: ${intervalText}\n\n`;
 
         if (nextFeeding.isActive && nextFeeding.time) {
-            message += `⏰ Следующее кормление в ${formatDateTime(nextFeeding.time, currentUser?.timezone)}\n\n`;
+            message += `${UI_TEXTS.status.nextFeeding} в ${formatDateTime(nextFeeding.time, currentUser?.timezone)}\n\n`;
         } else {
-            message += '⏹️ Кормления приостановлены\n\n';
+            message += `${UI_TEXTS.status.paused}\n\n`;
         }
 
-        // Добавляем статистику из базы данных
-        message += `📊 Статистика:\n`;
+        // Добавляем статистику
+        message += `${UI_TEXTS.status.statistics}\n`;
         message += `   👥 Пользователей: ${stats.totalUsers}\n`;
         message += `   🍽️ Кормлений сегодня: ${stats.todayFeedings}\n`;
         message += `   📈 Всего кормлений: ${stats.totalFeedings}`;
@@ -438,13 +296,13 @@ mainScene.command('status', async ctx => {
         ctx.reply(message);
     } catch (error) {
         console.error('Ошибка в команде /status:', error);
-        ctx.reply('Ошибка при получении статуса. Попробуйте позже.');
+        ctx.reply(MessageFormatter.error('Ошибка при получении статуса. ' + UI_TEXTS.common.tryAgain));
     }
 });
 
 // Обработка команды /home
 mainScene.command('home', ctx => {
-    ctx.reply('Возвращаемся на главный экран', getMainKeyboard());
+    ctx.reply(UI_TEXTS.navigation.goingHome, getMainKeyboard());
 });
 
 // Обработка кнопки "Уточнить детали кормления"
@@ -452,20 +310,16 @@ mainScene.hears(/📝 Уточнить детали кормления/, ctx => 
     ctx.scene.enter(SCENES.FEEDING_DETAILS);
 });
 
-// Обработка кнопки "На главную"
-mainScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
+// Регистрируем общие обработчики навигации ПОСЛЕ специфичных
+// Это важно: в Telegraf обработчики выполняются в порядке регистрации
+registerCommonNavigationHandlers(mainScene);
 
-// Обработка неизвестных команд (но не команд, начинающихся с /)
+// Обработка неизвестных команд
 mainScene.on('text', ctx => {
-    const text = ctx.message.text;
-    // Пропускаем команды, начинающиеся с /
-    if (text.startsWith('/')) {
+    const text = (ctx.message as any)?.text || '';
+    // Пропускаем команды и навигационные кнопки
+    if (text.startsWith('/') || text.includes('🏠')) {
         return;
     }
-    ctx.reply(MESSAGES.UNKNOWN_COMMAND, getMainKeyboard());
+    ctx.reply(UI_TEXTS.navigation.unknownCommand, getMainKeyboard());
 });
-
-// Экспорт функции getOrCreateUser
-export { getOrCreateUser };

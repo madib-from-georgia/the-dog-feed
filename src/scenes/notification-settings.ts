@@ -1,36 +1,31 @@
 import { Scenes, Markup } from 'telegraf';
 import { BotContext } from '../types';
-import { DatabaseService } from '../services/database';
 import { SCENES } from '../utils/constants';
+import { registerCommonNavigationHandlers } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter } from '../ui/messages';
 
 export const notificationSettingsScene = new Scenes.BaseScene<BotContext>(
     SCENES.NOTIFICATION_SETTINGS
 );
 
-// Глобальная переменная для доступа к базе данных
-let globalDatabase: DatabaseService | null = null;
-
-// Функция для установки глобальной базы данных
-export function setGlobalDatabaseForNotificationSettings(
-    database: DatabaseService
-) {
-    globalDatabase = database;
-}
+// Регистрируем общие обработчики навигации (с кнопкой "Назад")
+registerCommonNavigationHandlers(notificationSettingsScene, {
+    hasBackButton: true,
+    backTo: SCENES.SETTINGS
+});
 
 // Вход в сцену настроек уведомлений
 notificationSettingsScene.enter(async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply(
-                'Ошибка: база данных не инициализирована. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
-        const user = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const user = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
         if (!user) {
-            ctx.reply('❌ Ошибка: пользователь не найден');
+            ctx.reply(MessageFormatter.error(UI_TEXTS.errors.userNotFound));
             return;
         }
 
@@ -38,7 +33,7 @@ notificationSettingsScene.enter(async ctx => {
         const statusEmoji = user.notificationsEnabled ? '🔔' : '🔕';
 
         const message =
-            `${statusEmoji} уведомления\n\n` +
+            `${statusEmoji} ${UI_TEXTS.settings.notificationsHeader}\n\n` +
             `Текущий статус: ${statusText}\n\n` +
             `Уведомления включают:\n` +
             `• Сообщения о кормлении собаки\n` +
@@ -61,7 +56,7 @@ notificationSettingsScene.enter(async ctx => {
     } catch (error) {
         console.error('Ошибка получения настроек уведомлений:', error);
         ctx.reply(
-            '❌ Ошибка получения настроек. Попробуйте еще раз.',
+            MessageFormatter.error('Ошибка получения настроек. ' + UI_TEXTS.common.tryAgain),
             Markup.keyboard([['🏠 На главную']]).resize()
         );
     }
@@ -70,19 +65,19 @@ notificationSettingsScene.enter(async ctx => {
 // Обработка кнопки "Включить уведомления"
 notificationSettingsScene.hears(/🔔 Включить уведомления/, async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply('Ошибка: база данных не инициализирована');
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
-        const user = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const user = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
         if (!user) {
-            ctx.reply('❌ Ошибка: пользователь не найден');
+            ctx.reply(MessageFormatter.error(UI_TEXTS.errors.userNotFound));
             return;
         }
 
-        await globalDatabase.updateUserNotifications(user.id, true);
+        await ctx.database.updateUserNotifications(user.id, true);
 
         console.log(
             `Уведомления включены для пользователя: ${user.username || user.telegramId}`
@@ -92,26 +87,26 @@ notificationSettingsScene.hears(/🔔 Включить уведомления/, 
         ctx.scene.reenter();
     } catch (error) {
         console.error('Ошибка включения уведомлений:', error);
-        ctx.reply('❌ Ошибка сохранения настроек');
+        ctx.reply(MessageFormatter.error('Ошибка сохранения настроек'));
     }
 });
 
 // Обработка кнопки "Выключить уведомления"
 notificationSettingsScene.hears(/🔕 Выключить уведомления/, async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply('Ошибка: база данных не инициализирована');
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
-        const user = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const user = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
         if (!user) {
-            ctx.reply('❌ Ошибка: пользователь не найден');
+            ctx.reply(MessageFormatter.error(UI_TEXTS.errors.userNotFound));
             return;
         }
 
-        await globalDatabase.updateUserNotifications(user.id, false);
+        await ctx.database.updateUserNotifications(user.id, false);
 
         console.log(
             `Уведомления выключены для пользователя: ${user.username || user.telegramId}`
@@ -121,29 +116,24 @@ notificationSettingsScene.hears(/🔕 Выключить уведомления/
         ctx.scene.reenter();
     } catch (error) {
         console.error('Ошибка выключения уведомлений:', error);
-        ctx.reply('❌ Ошибка сохранения настроек');
+        ctx.reply(MessageFormatter.error('Ошибка сохранения настроек'));
     }
-});
-
-// Обработка кнопки "Назад"
-notificationSettingsScene.hears(/⬅️ Назад/, ctx => {
-    ctx.scene.enter(SCENES.SETTINGS);
-});
-
-// Обработка кнопки "На главную"
-notificationSettingsScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
 });
 
 // Обработка неизвестных команд
 notificationSettingsScene.on('text', async ctx => {
+    const text = (ctx.message as any)?.text || '';
+    if (text.startsWith('/')) {
+        return;
+    }
+
     try {
-        if (!globalDatabase) {
-            ctx.reply('Используйте кнопки меню для навигации.');
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.navigation.useButtons);
             return;
         }
 
-        const user = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const user = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
         const keyboard = user?.notificationsEnabled
             ? Markup.keyboard([
@@ -155,8 +145,8 @@ notificationSettingsScene.on('text', async ctx => {
                   ['⬅️ Назад', '🏠 На главную'],
               ]).resize();
 
-        ctx.reply('Используйте кнопки меню для навигации.', keyboard);
+        ctx.reply(UI_TEXTS.navigation.useButtons, keyboard);
     } catch (error) {
-        ctx.reply('Используйте кнопки меню для навигации.');
+        ctx.reply(UI_TEXTS.navigation.useButtons);
     }
 });

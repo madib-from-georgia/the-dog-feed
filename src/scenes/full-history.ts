@@ -1,29 +1,22 @@
 import { Scenes } from 'telegraf';
 import { BotContext } from '../types';
 import { getPaginationKeyboard } from '../utils/keyboards';
-import { MESSAGES, SCENES, EXPORT_SETTINGS } from '../utils/constants';
+import { SCENES, EXPORT_SETTINGS } from '../utils/constants';
 import { ScheduledFeeding } from '../services/scheduler';
-import { TimerService } from '../services/timer';
 import { formatDateTime } from '../utils/time-utils';
 import { createUserLink } from '../utils/user-utils';
-
-// Глобальные переменные для доступа к сервисам
-let globalSchedulerService: any = null;
-let globalTimerService: TimerService | null = null;
-
-// Функция для установки глобального сервиса планировщика
-export function setGlobalSchedulerForFullHistory(schedulerService: any) {
-    globalSchedulerService = schedulerService;
-}
-
-// Функция для установки глобального сервиса таймера
-export function setGlobalTimerForFullHistory(timerService: TimerService) {
-    globalTimerService = timerService;
-}
+import { registerCommonNavigationHandlers } from '../ui/navigation';
+import { UI_TEXTS } from '../ui/messages';
 
 export const fullHistoryScene = new Scenes.BaseScene<BotContext>(
     SCENES.FULL_HISTORY
 );
+
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(fullHistoryScene, {
+    hasBackButton: true,
+    backTo: SCENES.HISTORY
+});
 
 // Вход в сцену полной истории
 fullHistoryScene.enter(async ctx => {
@@ -41,7 +34,7 @@ fullHistoryScene.enter(async ctx => {
 // Функция для отображения страницы истории
 async function showHistoryPage(ctx: BotContext, page: number) {
     try {
-        ctx.reply(MESSAGES.LOADING_HISTORY);
+        ctx.reply(UI_TEXTS.history.loading);
 
         const limit = EXPORT_SETTINGS.RECORDS_PER_PAGE;
         const offset = (page - 1) * limit;
@@ -66,20 +59,20 @@ async function showHistoryPage(ctx: BotContext, page: number) {
 
         if (feedings.length === 0) {
             ctx.reply(
-                MESSAGES.NO_FEEDINGS_FOUND,
+                UI_TEXTS.history.noFeedings,
                 getPaginationKeyboard(page, totalPages, false, false)
             );
             return;
         }
 
         // Формируем сообщение с историей
-        let message = `${MESSAGES.FULL_HISTORY_HEADER}\n\n`;
+        let message = `${UI_TEXTS.history.fullHeader}\n\n`;
 
         // Получаем запланированные кормления
-        if (globalSchedulerService) {
+        if (ctx.schedulerService) {
             try {
                 const scheduledFeedings: ScheduledFeeding[] =
-                    await globalSchedulerService.getActiveScheduledFeedings();
+                    await ctx.schedulerService.getActiveScheduledFeedings();
                 const now = new Date();
 
                 // Фильтруем только будущие кормления
@@ -148,7 +141,7 @@ async function showHistoryPage(ctx: BotContext, page: number) {
         }
 
         // Добавляем статистику
-        message += `${MESSAGES.STATISTICS_HEADER}\n`;
+        message += `${UI_TEXTS.status.statistics}\n`;
         message += `📊 Всего записей: ${totalRecords}\n`;
         message += `📄 Страница: ${page} из ${totalPages}\n\n`;
 
@@ -187,7 +180,7 @@ async function showHistoryPage(ctx: BotContext, page: number) {
     } catch (error) {
         console.error('Ошибка при загрузке истории:', error);
         ctx.reply(
-            '❌ Произошла ошибка при загрузке истории. Попробуйте еще раз.',
+            `❌ Произошла ошибка при загрузке истории. ${UI_TEXTS.common.tryAgain}`,
             getPaginationKeyboard(1, 1, false, false)
         );
     }
@@ -218,9 +211,7 @@ fullHistoryScene.hears(/📤 Экспорт истории/, ctx => {
 // Обработка фильтров (заглушка для будущего расширения)
 fullHistoryScene.hears(/🔍 Фильтры/, ctx => {
     ctx.reply(
-        '🔍 Фильтры\n\n' +
-            'Эта функция будет добавлена в будущих обновлениях.\n' +
-            'Пока доступна фильтрация по периодам при экспорте.',
+        `🔍 Фильтры\n\n${UI_TEXTS.common.notImplemented}\nПока доступна фильтрация по периодам при экспорте.`,
         getPaginationKeyboard(
             ctx.session.fullHistory?.currentPage || 1,
             ctx.session.fullHistory?.totalPages || 1,
@@ -235,27 +226,12 @@ fullHistoryScene.hears(/📄 Страница \d+ из \d+/, ctx => {
     // Ничего не делаем, это просто информационная кнопка
 });
 
-// Обработка кнопки "Назад"
-fullHistoryScene.hears(/⬅️ Назад/, ctx => {
-    ctx.scene.enter(SCENES.HISTORY);
-});
-
-// Обработка кнопки "На главную"
-fullHistoryScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
-// Обработка команды /home
-fullHistoryScene.command('home', ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
 // Обработка неизвестных команд
 fullHistoryScene.on('text', ctx => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text || '';
 
-    // Пропускаем команды, начинающиеся с /
-    if (text.startsWith('/')) {
+    // Пропускаем команды и навигационные кнопки
+    if (text.startsWith('/') || text.includes('🏠') || text.includes('⬅️')) {
         return;
     }
 
@@ -265,7 +241,7 @@ fullHistoryScene.on('text', ctx => {
     const hasPrev = currentPage > 1;
 
     ctx.reply(
-        'Используйте кнопки меню для навигации.',
+        UI_TEXTS.navigation.useButtons,
         getPaginationKeyboard(currentPage, totalPages, hasNext, hasPrev)
     );
 });

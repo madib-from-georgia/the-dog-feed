@@ -1,81 +1,70 @@
 import { Scenes, Markup } from 'telegraf';
 import { BotContext } from '../types';
-import { DatabaseService } from '../services/database';
 import { FeedingParser } from '../services/feeding-parser';
 import { SCENES } from '../utils/constants';
+import { registerCommonNavigationHandlers, getBackAndHomeKeyboard } from '../ui/navigation';
+import { UI_TEXTS, MessageFormatter, MessageBuilder } from '../ui/messages';
 
 export const foodSettingsScene = new Scenes.BaseScene<BotContext>(
     SCENES.FOOD_SETTINGS
 );
 
-// Глобальная переменная для доступа к базе данных
-let globalDatabase: DatabaseService | null = null;
-
-// Функция для установки глобальной базы данных
-export function setGlobalDatabaseForFoodSettings(database: DatabaseService) {
-    globalDatabase = database;
-}
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(foodSettingsScene, {
+    hasBackButton: true,
+    backTo: SCENES.SETTINGS
+});
 
 // Вход в сцену настроек корма
 foodSettingsScene.enter(async ctx => {
     try {
-        if (!globalDatabase) {
-            ctx.reply(
-                'Ошибка: база данных не инициализирована. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
         // Получаем текущие настройки из БД
         const currentType =
-            (await globalDatabase.getSetting('default_food_type')) || 'dry';
+            (await ctx.database.getSetting('default_food_type')) || 'dry';
         const currentAmount =
-            (await globalDatabase.getSetting('default_food_amount')) || '12';
+            (await ctx.database.getSetting('default_food_amount')) || '12';
 
-        const typeText = currentType === 'dry' ? 'Сухой' : 'Влажный';
+        const currentSettings = MessageBuilder.currentSettings({
+            type: currentType,
+            amount: currentAmount
+        });
 
         const message =
-            `🍽️ корм\n\n` +
-            `Текущие настройки:\n` +
-            `• Тип корма: ${typeText}\n` +
-            `• Количество: ${currentAmount} граммов\n\n` +
+            `${UI_TEXTS.settings.foodHeader}\n\n` +
+            `${currentSettings}\n\n` +
             `Введите новые настройки корма:\n\n` +
             `Примеры форматов:\n` +
             FeedingParser.getExamples()
                 .map(example => `• ${example}`)
                 .join('\n');
 
-        ctx.reply(message, Markup.keyboard([['🏠 На главную']]).resize());
+        ctx.reply(message, getBackAndHomeKeyboard());
     } catch (error) {
         console.error('Ошибка получения настроек корма:', error);
         ctx.reply(
-            '❌ Ошибка получения настроек. Попробуйте еще раз.',
-            Markup.keyboard([['🏠 На главную']]).resize()
+            MessageFormatter.error('Ошибка получения настроек. ' + UI_TEXTS.common.tryAgain),
+            getBackAndHomeKeyboard()
         );
     }
 });
 
 // Обработка ввода настроек корма
 foodSettingsScene.on('text', async ctx => {
-    const text = ctx.message.text;
+    const text = (ctx.message as any)?.text || '';
 
-    // Проверка на кнопку "На главную"
-    if (text.includes('🏠 На главную')) {
-        ctx.scene.enter(SCENES.MAIN);
-        return;
-    }
-
-    // Проверка на кнопку "Назад"
-    if (text.includes('⬅️ Назад')) {
-        ctx.scene.enter(SCENES.SETTINGS);
+    // Пропускаем обработку навигационных кнопок и команд
+    if (text.includes('🏠 На главную') || text.includes('⬅️ Назад') || text.startsWith('/')) {
         return;
     }
 
     try {
-        if (!globalDatabase) {
-            ctx.reply(
-                'Ошибка: база данных не инициализирована. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.database) {
+            ctx.reply(UI_TEXTS.errors.databaseNotInitialized);
             return;
         }
 
@@ -84,9 +73,8 @@ foodSettingsScene.on('text', async ctx => {
 
         if (!parsed.isValid) {
             ctx.reply(
-                `❌ Ошибка: ${parsed.error}\n\n` +
-                    `Попробуйте еще раз или используйте примеры выше.`,
-                Markup.keyboard([['🏠 На главную']]).resize()
+                MessageFormatter.error(`${parsed.error}\n\nПопробуйте еще раз или используйте примеры выше.`),
+                getBackAndHomeKeyboard()
             );
             return;
         }
@@ -95,7 +83,7 @@ foodSettingsScene.on('text', async ctx => {
         let updatedSettings = [];
 
         if (parsed.amount !== undefined) {
-            await globalDatabase.setSetting(
+            await ctx.database.setSetting(
                 'default_food_amount',
                 parsed.amount.toString()
             );
@@ -103,7 +91,7 @@ foodSettingsScene.on('text', async ctx => {
         }
 
         if (parsed.foodType !== undefined) {
-            await globalDatabase.setSetting(
+            await ctx.database.setSetting(
                 'default_food_type',
                 parsed.foodType
             );
@@ -111,23 +99,25 @@ foodSettingsScene.on('text', async ctx => {
             updatedSettings.push(`тип: ${typeText}`);
         }
 
-        const user = await globalDatabase.getUserByTelegramId(ctx.from!.id);
+        const user = await ctx.database.getUserByTelegramId(ctx.from!.id);
+        const username = user?.username || 'Пользователь';
 
-        const message =
-            `✅ Настройки корма обновлены!\n\n` +
-            `Новые настройки: ${updatedSettings.join(', ')}\n\n` +
-            `Изменения вступят в силу после следующего кормления.\n` +
-            `Инициатор: ${user?.username || 'Пользователь'}`;
+        // Создаем сообщение используя MessageBuilder
+        const notificationMessage = MessageBuilder.settingsUpdated(
+            UI_TEXTS.settings.foodUpdated,
+            updatedSettings,
+            username
+        );
 
         // Уведомление других пользователей об изменении
-        const allUsers = await globalDatabase.getAllUsers();
+        const allUsers = await ctx.database.getAllUsers();
         for (const u of allUsers) {
             // Не отправляем уведомление пользователю, который сделал изменения
             if (u.telegramId !== ctx.from!.id && u.notificationsEnabled) {
                 try {
                     await ctx.telegram.sendMessage(
                         u.telegramId,
-                        `🍽️ ${message}`
+                        `🍽️ ${notificationMessage}`
                     );
                 } catch (error) {
                     console.error(
@@ -139,21 +129,21 @@ foodSettingsScene.on('text', async ctx => {
         }
 
         console.log(
-            `Настройки корма изменены: ${updatedSettings.join(', ')} пользователем ${user?.username}`
+            `Настройки корма изменены: ${updatedSettings.join(', ')} пользователем ${username}`
         );
 
         // Отправляем подтверждение только текущему пользователю
         ctx.reply(
-            `✅ Настройки корма обновлены!\n\n` +
-                `Новые настройки: ${updatedSettings.join(', ')}\n\n` +
-                `Изменения вступят в силу после следующего кормления.`,
-            Markup.keyboard([['⬅️ Назад', '🏠 На главную']]).resize()
+            MessageFormatter.success(UI_TEXTS.settings.foodUpdated) +
+                `\n\nНовые настройки: ${updatedSettings.join(', ')}\n\n` +
+                UI_TEXTS.settings.changesApplied,
+            getBackAndHomeKeyboard()
         );
     } catch (error) {
         console.error('Ошибка сохранения настроек корма:', error);
         ctx.reply(
-            '❌ Ошибка сохранения настроек. Попробуйте еще раз.',
-            Markup.keyboard([['🏠 На главную']]).resize()
+            MessageFormatter.error('Ошибка сохранения настроек. ' + UI_TEXTS.common.tryAgain),
+            getBackAndHomeKeyboard()
         );
     }
 });

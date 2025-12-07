@@ -1,13 +1,24 @@
 import { Scenes } from 'telegraf';
 import { BotContext } from '../types';
-import { getSettingsKeyboard } from '../utils/keyboards';
-import { MESSAGES, SCENES } from '../utils/constants';
+import { SCENES } from '../utils/constants';
+import { registerCommonNavigationHandlers, createNavigationKeyboard } from '../ui/navigation';
+import { UI_TEXTS } from '../ui/messages';
 
 export const settingsScene = new Scenes.BaseScene<BotContext>(SCENES.SETTINGS);
 
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(settingsScene);
+
+// Клавиатура настроек
+function getSettingsKeyboard() {
+    return createNavigationKeyboard([
+        ['🍽️ корм', '⏰ интервал', '🔔 уведомления']
+    ]);
+}
+
 // Вход в сцену настроек
 settingsScene.enter(ctx => {
-    ctx.reply(MESSAGES.SETTINGS_PLACEHOLDER, getSettingsKeyboard());
+    ctx.reply(UI_TEXTS.settings.header, getSettingsKeyboard());
 });
 
 // Обработка кнопки "корм"
@@ -20,16 +31,15 @@ settingsScene.hears(/⏰ интервал/, ctx => {
     ctx.scene.enter(SCENES.INTERVAL_SETTINGS);
 });
 
+// Обработка кнопки "уведомления"
 settingsScene.hears(/🔔 уведомления/, ctx => {
     ctx.scene.enter(SCENES.NOTIFICATION_SETTINGS);
 });
 
-// Обработка кнопки "На главную"
-settingsScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
 // Обработка неизвестных команд
 settingsScene.on('text', ctx => {
-    ctx.reply('Используйте кнопки меню для навигации.', getSettingsKeyboard());
+    const text = (ctx.message as any)?.text || '';
+    if (!text.startsWith('/')) {
+        ctx.reply(UI_TEXTS.navigation.useButtons, getSettingsKeyboard());
+    }
 });

@@ -1,32 +1,57 @@
 import { Scenes } from 'telegraf';
-import { BotContext } from '../types';
-import {
-    getOtherActionsKeyboard,
-    getScheduleManagementKeyboard,
-    getMainKeyboard,
-} from '../utils/keyboards';
-import { MESSAGES, SCENES } from '../utils/constants';
+import { BotContext, User } from '../types';
+import { SCENES } from '../utils/constants';
 import { createUserLink } from '../utils/user-utils';
-
-// Глобальные переменные из main.ts
-let globalTimerService: any = null;
-let globalDatabase: any = null;
-let getOrCreateUser: any = null;
-
-// Функция для установки глобальных сервисов
-export function setGlobalServicesForOtherActions(
-    timerService: any,
-    database: any,
-    getUserFunc: any
-) {
-    globalTimerService = timerService;
-    globalDatabase = database;
-    getOrCreateUser = getUserFunc;
-}
+import { registerCommonNavigationHandlers, createNavigationKeyboard } from '../ui/navigation';
+import { UI_TEXTS, MessageBuilder } from '../ui/messages';
 
 export const otherActionsScene = new Scenes.BaseScene<BotContext>(
     SCENES.OTHER_ACTIONS
 );
+
+// Регистрируем общие обработчики навигации
+registerCommonNavigationHandlers(otherActionsScene);
+
+// Локальная функция для получения или создания пользователя
+async function getOrCreateUser(
+    ctx: BotContext,
+    telegramId: number,
+    username?: string
+): Promise<User> {
+    if (!ctx.database) {
+        throw new Error('Database не инициализирована');
+    }
+
+    let user = await ctx.database.getUserByTelegramId(telegramId);
+
+    if (!user) {
+        user = await ctx.database.createUser(telegramId, username);
+        console.log(`Новый пользователь: ${username || telegramId}`);
+    }
+
+    return {
+        id: user.id,
+        telegramId: user.telegramId,
+        username: user.username,
+        notificationsEnabled: user.notificationsEnabled,
+    };
+}
+
+// Клавиатура других действий
+function getOtherActionsKeyboard() {
+    return createNavigationKeyboard([
+        ['⏹️ Завершить кормления на сегодня'],
+        ['📋 История кормлений', '⚙️ Настройки'],
+    ]);
+}
+
+// Клавиатура управления расписанием
+function getScheduleManagementKeyboard() {
+    return createNavigationKeyboard([
+        ['📅 Запланировать кормление'],
+        ['📋 Просмотреть запланированные', '❌ Отменить запланированные'],
+    ]);
+}
 
 // Вход в сцену других действий
 otherActionsScene.enter(ctx => {
@@ -36,37 +61,33 @@ otherActionsScene.enter(ctx => {
 // Обработка кнопки "Завершить кормления на сегодня"
 otherActionsScene.hears(/⏹️ Завершить кормления на сегодня/, async ctx => {
     try {
-        if (!globalTimerService || !globalDatabase) {
-            ctx.reply(
-                'Ошибка: сервисы не инициализированы. Попробуйте перезапустить бота командой /start'
-            );
+        if (!ctx.timerService || !ctx.database) {
+            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
             return;
         }
 
         const user = await getOrCreateUser(
+            ctx,
             ctx.from!.id,
             ctx.from!.username || ctx.from!.first_name
         );
 
-        globalTimerService.stopAllTimers();
+        ctx.timerService.stopAllTimers();
 
-        // Создаем объект, соответствующий интерфейсу DatabaseUser
+        // Создаем объект для createUserLink
         const dbUser = {
             id: user.id,
             telegramId: user.telegramId,
             username: user.username,
             notificationsEnabled: user.notificationsEnabled,
-            feedingInterval: user.feedingInterval || 210, // Значение по умолчанию
+            feedingInterval: user.feedingInterval || 210,
             createdAt: new Date(),
         };
 
-        const message =
-            `${MESSAGES.FEEDINGS_STOPPED}\n` +
-            `Инициатор: ${createUserLink(dbUser)}\n\n` +
-            `Чтобы возобновить кормления, нажмите "🍽️ Собачка поел"`;
+        const message = MessageBuilder.feedingStopped(createUserLink(dbUser));
 
-        // Уведомление всех пользователей через базу данных
-        const allUsers = await globalDatabase.getAllUsers();
+        // Уведомление всех пользователей
+        const allUsers = await ctx.database.getAllUsers();
         for (const u of allUsers) {
             if (u.notificationsEnabled) {
                 try {
@@ -82,13 +103,11 @@ otherActionsScene.hears(/⏹️ Завершить кормления на се�
 
         console.log(`Кормления остановлены пользователем: ${user.username}`);
 
-        // Остаемся на главном экране
-        ctx.reply('Возвращаемся на главный экран', getMainKeyboard());
+        // Возвращаемся на главный экран
+        ctx.scene.enter(SCENES.MAIN);
     } catch (error) {
         console.error('Ошибка при остановке кормлений:', error);
-        ctx.reply(
-            'Произошла ошибка при остановке кормлений. Попробуйте еще раз.'
-        );
+        ctx.reply('Произошла ошибка при остановке кормлений. ' + UI_TEXTS.common.tryAgain);
     }
 });
 
@@ -125,20 +144,15 @@ otherActionsScene.hears(/⚙️ Настройки/, ctx => {
     ctx.scene.enter(SCENES.SETTINGS);
 });
 
-// Обработка кнопки "На главную"
-otherActionsScene.hears(/🏠 На главную/, ctx => {
-    ctx.scene.enter(SCENES.MAIN);
-});
-
-// Обработка кнопки "🏠 На главную" для управления расписанием
+// Обработка кнопки "📋 На главную к списку"
 otherActionsScene.hears(/📋 На главную к списку/, ctx => {
     ctx.scene.enter(SCENES.SCHEDULED_LIST);
 });
 
 // Обработка неизвестных команд
 otherActionsScene.on('text', ctx => {
-    ctx.reply(
-        'Используйте кнопки меню для навигации.',
-        getOtherActionsKeyboard()
-    );
+    const text = (ctx.message as any)?.text || '';
+    if (!text.startsWith('/') && !text.includes('🏠 На главную')) {
+        ctx.reply(UI_TEXTS.navigation.useButtons, getOtherActionsKeyboard());
+    }
 });
