@@ -3,7 +3,8 @@ import { BotContext, User } from '../types';
 import { SCENES } from '../utils/constants';
 import { createUserLink } from '../utils/user-utils';
 import { registerCommonNavigationHandlers, createNavigationKeyboard } from '../ui/navigation';
-import { UI_TEXTS, MessageBuilder } from '../ui/messages';
+import { UI_TEXTS, MessageBuilder, MessageFormatter } from '../ui/messages';
+import { formatDateTime, formatInterval } from '../utils/time-utils';
 
 export const otherActionsScene = new Scenes.BaseScene<BotContext>(
     SCENES.OTHER_ACTIONS
@@ -40,7 +41,7 @@ async function getOrCreateUser(
 // Клавиатура других действий
 function getOtherActionsKeyboard() {
     return createNavigationKeyboard([
-        ['⏹️ Завершить кормления на сегодня'],
+        ['Когда следующее кормление?'],
         ['📋 История кормлений', '⚙️ Настройки'],
     ]);
 }
@@ -58,56 +59,42 @@ otherActionsScene.enter(ctx => {
     ctx.reply('Выберите действие:', getOtherActionsKeyboard());
 });
 
-// Обработка кнопки "Завершить кормления на сегодня"
-otherActionsScene.hears(/⏹️ Завершить кормления на сегодня/, async ctx => {
+// Обработка кнопки "Когда следующее кормление?"
+otherActionsScene.hears(/Когда следующее кормление\?/, async ctx => {
     try {
         if (!ctx.timerService || !ctx.database) {
             ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
             return;
         }
 
-        const user = await getOrCreateUser(
-            ctx,
-            ctx.from!.id,
-            ctx.from!.username || ctx.from!.first_name
-        );
+        const nextFeedingInfo = ctx.timerService.getNextFeedingInfo();
 
-        ctx.timerService.stopAllTimers();
-
-        // Создаем объект для createUserLink
-        const dbUser = {
-            id: user.id,
-            telegramId: user.telegramId,
-            username: user.username,
-            notificationsEnabled: user.notificationsEnabled,
-            feedingInterval: user.feedingInterval || 210,
-            createdAt: new Date(),
-        };
-
-        const message = MessageBuilder.feedingStopped(createUserLink(dbUser));
-
-        // Уведомление всех пользователей
-        const allUsers = await ctx.database.getAllUsers();
-        for (const u of allUsers) {
-            if (u.notificationsEnabled) {
-                try {
-                    await ctx.telegram.sendMessage(u.telegramId, message);
-                } catch (error) {
-                    console.error(
-                        `Ошибка отправки сообщения пользователю ${u.telegramId}:`,
-                        error
-                    );
-                }
-            }
+        if (!nextFeedingInfo.isActive || !nextFeedingInfo.time) {
+            ctx.reply(
+                `${UI_TEXTS.status.paused}\nЧтобы возобновить, нажмите "${UI_TEXTS.feeding.buttonText}"`
+            );
+            return;
         }
 
-        console.log(`Кормления остановлены пользователем: ${user.username}`);
+        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
 
-        // Возвращаемся на главный экран
-        ctx.scene.enter(SCENES.MAIN);
+        const nextFeedingTime = nextFeedingInfo.time;
+        const timeString = currentUser
+            ? formatDateTime(nextFeedingTime, currentUser.timezone).split(' в ')[1]
+            : nextFeedingTime.getHours().toString().padStart(2, '0') +
+              ':' +
+              nextFeedingTime.getMinutes().toString().padStart(2, '0');
+
+        const now = new Date();
+        const timeDiff = nextFeedingTime.getTime() - now.getTime();
+        const timeDiffString = formatInterval(Math.floor(timeDiff / (1000 * 60)));
+
+        ctx.reply(`⏰ Следующее кормление в ${timeString} (через ${timeDiffString})`);
     } catch (error) {
-        console.error('Ошибка при остановке кормлений:', error);
-        ctx.reply('Произошла ошибка при остановке кормлений. ' + UI_TEXTS.common.tryAgain);
+        console.error('Ошибка при получении времени следующего кормления:', error);
+        ctx.reply(
+            MessageFormatter.error('Произошла ошибка при получении времени следующего кормления. ' + UI_TEXTS.common.tryAgain)
+        );
     }
 });
 

@@ -91,18 +91,17 @@ export class TimerService {
         if (!this.timerState.isActive) return;
 
         const message = '🔔 Пора покормить собаку!';
-        
+
         // Получаем всех пользователей из базы данных для уведомлений
         const allUsers = await this.database.getAllUsers();
         for (const user of allUsers) {
             if (user.notificationsEnabled) {
                 try {
                     // Отправляем сообщение с клавиатурой главного экрана
-                    // Клавиатура показывает кнопку "Собачка поел" и скрывает кнопку "Уточнить детали кормления"
                     await this.bot.telegram.sendMessage(
                         user.telegramId,
                         message,
-                        getMainKeyboard(false) // false означает, что кнопка "Уточнить детали кормления" не показывается
+                        getMainKeyboard()
                     );
                 } catch (error) {
                     console.error(
@@ -128,18 +127,17 @@ export class TimerService {
             }
 
             const message = '🔔 Напоминание: собаку все еще нужно покормить!';
-            
+
             // Получаем всех пользователей из базы данных для уведомлений
             const allUsers = await this.database.getAllUsers();
             for (const user of allUsers) {
                 if (user.notificationsEnabled) {
                     try {
                         // Отправляем сообщение с клавиатурой главного экрана
-                        // Клавиатура показывает кнопку "Собачка поел" и скрывает кнопку "Уточнить детали кормления"
                         await this.bot.telegram.sendMessage(
                             user.telegramId,
                             message,
-                            getMainKeyboard(false) // false означает, что кнопка "Уточнить детали кормления" не показывается
+                            getMainKeyboard()
                         );
                     } catch (error) {
                         console.error(

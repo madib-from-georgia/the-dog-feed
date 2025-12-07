@@ -39,27 +39,13 @@ export async function getOrCreateUser(
 
 // Вход в главную сцену
 mainScene.enter(ctx => {
-    // Проверяем, нужно ли показывать кнопку "Уточнить детали кормления"
-    const showFeedingDetailsButton = ctx.session?.justFed === true;
-
-    // Очищаем флаг, чтобы кнопка не показывалась при следующих входах
-    if (ctx.session) {
-        ctx.session.justFed = false;
-    }
-
-    // Проверяем, был ли это первый вход (через /start)
     if (!ctx.session?.firstVisitDone) {
-        // Первый вход - показываем приветственное сообщение
         if (ctx.session) {
             ctx.session.firstVisitDone = true;
         }
-        ctx.reply(UI_TEXTS.welcome, getMainKeyboard(showFeedingDetailsButton));
+        ctx.reply(UI_TEXTS.welcome, getMainKeyboard());
     } else {
-        // Последующие переходы - показываем другое сообщение
-        ctx.reply(
-            UI_TEXTS.navigation.goingHome,
-            getMainKeyboard(showFeedingDetailsButton)
-        );
+        ctx.reply(UI_TEXTS.navigation.goingHome, getMainKeyboard());
     }
 });
 
@@ -99,48 +85,6 @@ async function autoDetectAndSaveTimezone(
 // Обработка кнопки "Другие действия"
 mainScene.hears(/Другие действия/, ctx => {
     ctx.scene.enter(SCENES.OTHER_ACTIONS);
-});
-
-// Обработка кнопки "Когда следующее кормление?"
-mainScene.hears(/Когда следующее кормление\?/, async ctx => {
-    try {
-        if (!ctx.timerService || !ctx.database) {
-            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
-            return;
-        }
-
-        const nextFeedingInfo = ctx.timerService.getNextFeedingInfo();
-
-        if (!nextFeedingInfo.isActive || !nextFeedingInfo.time) {
-            ctx.reply(
-                `${UI_TEXTS.status.paused}\nЧтобы возобновить, нажмите "${UI_TEXTS.feeding.buttonText}"`
-            );
-            return;
-        }
-
-        // Получаем текущего пользователя для определения его часового пояса
-        const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
-
-        // Форматирование времени следующего кормления
-        const nextFeedingTime = nextFeedingInfo.time;
-        const timeString = currentUser
-            ? formatDateTime(nextFeedingTime, currentUser.timezone).split(' в ')[1]
-            : nextFeedingTime.getHours().toString().padStart(2, '0') +
-              ':' +
-              nextFeedingTime.getMinutes().toString().padStart(2, '0');
-
-        // Вычисление времени до следующего кормления
-        const now = new Date();
-        const timeDiff = nextFeedingTime.getTime() - now.getTime();
-        const timeDiffString = formatInterval(Math.floor(timeDiff / (1000 * 60)));
-
-        ctx.reply(`⏰ Следующее кормление в ${timeString} (через ${timeDiffString})`);
-    } catch (error) {
-        console.error('Ошибка при получении времени следующего кормления:', error);
-        ctx.reply(
-            MessageFormatter.error('Произошла ошибка при получении времени следующего кормления. ' + UI_TEXTS.common.tryAgain)
-        );
-    }
 });
 
 // Обработка кнопки "Собачка поел"
@@ -239,7 +183,7 @@ mainScene.hears(/🍽️ Собачка поел/, async ctx => {
         );
 
         // Показываем сообщение об успешном кормлении
-        await ctx.reply(message, getMainKeyboard(true));
+        await ctx.reply(message, getMainKeyboard());
     } catch (error) {
         console.error('Ошибка при обработке кормления:', error);
         ctx.reply(MessageFormatter.error('Произошла ошибка при записи кормления. ' + UI_TEXTS.common.tryAgain));
@@ -261,6 +205,49 @@ mainScene.command('status', async ctx => {
         const nextFeeding = ctx.timerService.getNextFeedingInfo();
         const lastFeeding = await ctx.database.getLastFeeding();
         const stats = await ctx.database.getStats();
+// Обработка кнопки "⏹️ Завершить кормления на сегодня"
+mainScene.hears(/⏹️ Завершить кормления на сегодня/, async ctx => {
+    try {
+        if (!ctx.timerService || !ctx.database) {
+            ctx.reply(UI_TEXTS.errors.servicesNotInitialized);
+            return;
+        }
+
+        const dbUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
+        if (!dbUser) {
+            ctx.reply(UI_TEXTS.errors.userNotFound);
+            return;
+        }
+
+        ctx.timerService.stopAllTimers();
+
+        const message = MessageBuilder.feedingStopped(createUserLink(dbUser));
+
+        // Уведомление всех пользователей
+        const allUsers = await ctx.database.getAllUsers();
+        for (const u of allUsers) {
+            if (u.notificationsEnabled) {
+                try {
+                    await ctx.telegram.sendMessage(u.telegramId, message);
+                } catch (error) {
+                    console.error(
+                        `Ошибка отправки сообщения пользователю ${u.telegramId}:`,
+                        error
+                    );
+                }
+            }
+        }
+
+        console.log(`Кормления остановлены пользователем: ${dbUser.username}`);
+
+        // Остаемся на главном экране
+        ctx.reply('Кормления на сегодня завершены', getMainKeyboard());
+    } catch (error) {
+        console.error('Ошибка при остановке кормлений:', error);
+        ctx.reply(MessageFormatter.error('Произошла ошибка при остановке кормлений. ' + UI_TEXTS.common.tryAgain));
+    }
+});
+
 
         // Получаем текущего пользователя
         const currentUser = await ctx.database.getUserByTelegramId(ctx.from!.id);
