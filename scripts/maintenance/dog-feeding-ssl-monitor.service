@@ -1,0 +1,9 @@
+[Unit]
+Description=Check SSL certificate expiry for dog-feeding-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dog-feeding-bot/ssl-monitor.env
+ExecStart=/usr/local/bin/check-ssl-cert.sh

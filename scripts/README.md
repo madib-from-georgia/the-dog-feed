@@ -18,6 +18,7 @@
 - `status-yandex.sh` - Проверка статуса бота
 - `logs-yandex.sh` - Просмотр логов
 - `update-yandex.sh` - Обновление кода бота
+- `setup-ssl-monitor-yandex.sh` - Установка SSL-мониторинга и alert'ов
 - `diagnose-connectivity.sh` - Диагностика проблем подключения
 - `reset-vm.sh` - Полный сброс VM (осторожно!)
 
@@ -44,6 +45,9 @@
 
 # Обновление кода
 ./scripts/maintenance/update-yandex.sh
+
+# Установка SSL-мониторинга
+./scripts/maintenance/setup-ssl-monitor-yandex.sh <telegram-chat-id>
 ```
 
 ### 3. Диагностика проблем
@@ -59,7 +63,8 @@
 
 1. `deployment/deploy-yandex.sh` - развертывание
 2. `deployment/setup-nginx-yandex.sh` - SSL (работает с любыми доменами)
-3. `maintenance/status-yandex.sh` - проверка
+3. `maintenance/setup-ssl-monitor-yandex.sh` - алерты и renewal hook
+4. `maintenance/status-yandex.sh` - проверка
 
 ### Обновление кода
 

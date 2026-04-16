@@ -54,6 +54,23 @@
 ./scripts/maintenance/update-yandex.sh
 ```
 
+### 4. `setup-ssl-monitor-yandex.sh` - Установка SSL-мониторинга
+
+**Назначение:** Воспроизводимая установка серверного мониторинга истечения SSL и renewal hook для nginx  
+**Запуск:** С локального компьютера  
+**Что делает:**
+
+- 🔔 Устанавливает Telegram-алерт об истечении сертификата
+- 🔄 Устанавливает renewal hook `reload-nginx.sh` для Certbot
+- ⏰ Включает `dog-feeding-ssl-monitor.timer`
+- 📝 Создает `/etc/dog-feeding-bot/ssl-monitor.env`
+
+**Использование:**
+
+```bash
+./scripts/maintenance/setup-ssl-monitor-yandex.sh <telegram-chat-id> [domain] [alert-days]
+```
+
 ### 8. Настройка регулярного резервного копирования
 
 **Назначение:** Настройка автоматического резервного копирования базы данных
@@ -163,6 +180,11 @@ ts-node scripts/maintenance/backup-database.ts
 
 1. `update-yandex.sh` - обновление кода
 2. `status-yandex.sh` - проверка что все работает
+
+### Если нужно восстановить SSL-мониторинг:
+
+1. `setup-ssl-monitor-yandex.sh` - повторная установка timer/hook/env
+2. `status-yandex.sh` - общая проверка сервера
 
 ### Если нужно настроить регулярное резервное копирование:
 
