@@ -45,6 +45,7 @@ npm run dev:ts
 ```env
 BOT_TOKEN=your_telegram_bot_token_here
 NODE_ENV=production
+BOT_MODE=webhook
 WEBHOOK_URL=https://yourdomain.com
 WEBHOOK_PATH=/webhook
 PORT=8080
@@ -65,28 +66,33 @@ npm run deploy
 
 ## Переменные окружения
 
-| Переменная     | Обязательная      | Описание                           | Пример                   |
-| -------------- | ----------------- | ---------------------------------- | ------------------------ |
-| `BOT_TOKEN`    | ✅                | Токен Telegram бота                | `123456:ABC-DEF...`      |
-| `NODE_ENV`     | ❌                | Окружение (development/production) | `production`             |
-| `WEBHOOK_URL`  | ✅ для продакшена | URL домена для webhook             | `https://yourdomain.com` |
-| `WEBHOOK_PATH` | ❌                | Путь для webhook                   | `/webhook`               |
-| `PORT`         | ❌                | Порт для webhook сервера           | `8080`                   |
+| Переменная     | Обязательная      | Описание                              | Пример                   |
+| -------------- | ----------------- | ------------------------------------- | ------------------------ |
+| `BOT_TOKEN`    | ✅                | Токен Telegram бота                   | `123456:ABC-DEF...`      |
+| `NODE_ENV`     | ❌                | Окружение (development/production)    | `production`             |
+| `BOT_MODE`     | ❌                | Получение обновлений: polling/webhook | `webhook`                |
+| `WEBHOOK_URL`  | ✅ для продакшена | URL домена для webhook                | `https://yourdomain.com` |
+| `WEBHOOK_PATH` | ❌                | Путь для webhook                      | `/webhook`               |
+| `PORT`         | ❌                | Порт для webhook сервера              | `8080`                   |
 
 ## Переключение между режимами
 
-Бот автоматически определяет режим работы по `NODE_ENV`:
+По умолчанию бот определяет режим работы по `NODE_ENV`:
 
 - `development` → polling (опрос Telegram серверов)
 - `production` → webhook (HTTP сервер для получения обновлений)
 
 ### Принудительное переключение режима
 
-Если нужно запустить polling в продакшене:
+Если нужно запустить polling в продакшене, сохранив production-токен:
 
 ```bash
-NODE_ENV=development npm start
+NODE_ENV=production BOT_MODE=polling npm start
 ```
+
+При запуске polling Telegraf удаляет зарегистрированный webhook без очистки
+накопившейся очереди обновлений. Одновременно использовать webhook и polling
+для одного токена нельзя.
 
 Если нужно тестировать webhook локально:
 

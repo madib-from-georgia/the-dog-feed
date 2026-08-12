@@ -11,6 +11,7 @@
 - `BOT_TOKEN_PROD` - токен для продакшенового бота
 - `BOT_TOKEN_DEV` - токен для девелоперского бота
 - `BOT_TOKEN` - fallback токен (используется если специфичный токен не найден)
+- `BOT_MODE` - способ получения обновлений (`webhook` или `polling`)
 
 ### Логика выбора токена
 
@@ -27,7 +28,8 @@ if (NODE_ENV === 'production') {
 ### Production (NODE_ENV=production)
 
 - Использует `BOT_TOKEN_PROD`
-- Запускается в режиме webhook
+- По умолчанию запускается в режиме webhook
+- Может работать через polling при `BOT_MODE=polling`
 - Устанавливает webhook на указанный URL
 - Обрабатывает rate limiting при установке webhook
 
@@ -72,6 +74,7 @@ BOT_TOKEN_DEV=your_dev_bot_token_here
 ```bash
 NODE_ENV=production
 BOT_TOKEN_PROD=your_prod_bot_token_here
+BOT_MODE=webhook
 WEBHOOK_URL=https://yourdomain.com
 WEBHOOK_PATH=/webhook
 PORT=8080

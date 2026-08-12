@@ -27,17 +27,20 @@ import {
     getTimezoneByOffset,
 } from './utils/timezone-utils';
 import { AccessControlService } from './services/access-control';
+import { resolveBotMode } from './config/bot-mode';
 
 // Загрузка переменных окружения
 dotenv.config();
 
 // Переменные для webhook
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const BOT_MODE = resolveBotMode(NODE_ENV, process.env.BOT_MODE);
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const PORT = parseInt(process.env.PORT || '3000');
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/webhook';
 
 console.log(`Запуск в режиме: ${NODE_ENV}`);
+console.log(`Режим получения обновлений: ${BOT_MODE}`);
 
 // Выбор токена бота в зависимости от окружения
 let BOT_TOKEN: string;
@@ -615,10 +618,10 @@ async function startBot() {
         console.log('Запуск бота...');
 
         // Выбор режима запуска в зависимости от окружения
-        if (NODE_ENV === 'production') {
+        if (BOT_MODE === 'webhook') {
             // Режим webhook для продакшена
             if (!WEBHOOK_URL) {
-                throw new Error('WEBHOOK_URL обязателен для продакшена');
+                throw new Error('WEBHOOK_URL обязателен для webhook-режима');
             }
 
             console.log(`Запуск в режиме webhook:`);
@@ -679,18 +682,11 @@ async function startBot() {
 
             console.log('Бот запущен в режиме webhook!');
         } else {
-            // Режим polling для разработки
-            console.log('Запуск в режиме polling (разработка)...');
+            console.log('Запуск в режиме polling...');
 
-            // ВАЖНО: НЕ удаляем webhook в development, чтобы не повлиять на продакшеновый бот
-            // Если используется отдельный dev бот, то webhook у него скорее всего не установлен
-            // Если же используется тот же бот, то удаление webhook сломает продакшен
-            console.log(
-                'Webhook не удаляется для безопасности продакшенового бота'
-            );
-
-            // Запуск в режиме polling
-            await bot.launch();
+            // Telegraf удаляет webhook перед polling. Не очищаем очередь обновлений,
+            // чтобы команды, накопленные во время недоступности webhook, не потерялись.
+            await bot.launch({ dropPendingUpdates: false });
 
             console.log('Бот запущен в режиме polling!');
         }
